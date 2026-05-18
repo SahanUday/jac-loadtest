@@ -760,31 +760,26 @@ In microservice mode, jac-scale runs a **gateway** that routes requests to indiv
 
 #### Reading jac.toml
 
-The routing table is built from the project's `jac.toml`:
+The routing table is built from the project's `jac.toml`. Routes are declared as a flat
+`[plugins.scale.microservices.routes]` table mapping module name → gateway prefix:
 
 ```toml
 [plugins.scale.microservices]
 enabled = true
 
-[[plugins.scale.microservices.services]]
-name   = "order_service"
-file   = "order_service.jac"
-prefix = "/walker/order"
-port   = 18001
-
-[[plugins.scale.microservices.services]]
-name   = "inventory_service"
-file   = "inventory_service.jac"
-prefix = "/walker/inventory"
-port   = 18002
+[plugins.scale.microservices.routes]
+order_service     = "/walker/order"
+inventory_service = "/walker/inventory"
 ```
 
-This produces the routing table:
+Service URLs are **not** stored in `jac.toml`. When jac-scale starts services locally it sets
+`JAC_SV_<MODULE>_URL` environment variables (e.g. `JAC_SV_ORDER_SERVICE_URL=http://localhost:18001`).
+The topology module reads these env vars to build the routing table:
 
 ```python
 {
-    "/walker/order":     "http://localhost:18001",
-    "/walker/inventory": "http://localhost:18002",
+    "/walker/order":     "http://localhost:18001",   # from JAC_SV_ORDER_SERVICE_URL
+    "/walker/inventory": "http://localhost:18002",   # from JAC_SV_INVENTORY_SERVICE_URL
 }
 ```
 
@@ -803,10 +798,10 @@ flowchart LR
 
 #### Service URL Resolution
 
-Each service URL is `http://localhost:<port>` by default, using the port from `jac.toml`. For remote or CI deployments where no `jac.toml` is present, use `--services-map` instead:
+For remote or CI deployments where no `jac.toml` or `JAC_SV_*_URL` env vars are present, use `--services-map` to supply URLs explicitly:
 
 ```bash
-jac-loadtest recording.har --mode microservice \
+jac loadtest recording.har --mode microservice \
   --services-map '{"order_service": "http://order.internal:8001"}'
 ```
 

@@ -72,6 +72,18 @@ class LoadTestConfig:
     report_out: str | None = None
 
 
+def parse_duration(s: str) -> float:
+    """Convert a duration string ('30s', '2m', '1h') to seconds."""
+    s = s.strip()
+    if s.endswith("h"):
+        return float(s[:-1]) * 3600
+    if s.endswith("m"):
+        return float(s[:-1]) * 60
+    if s.endswith("s"):
+        return float(s[:-1])
+    return float(s)
+
+
 def from_args(args: object) -> LoadTestConfig:
     """Build LoadTestConfig by applying CLI args on top of built-in defaults.
 

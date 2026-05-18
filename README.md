@@ -4,12 +4,7 @@ HAR-based load testing CLI for [jac-scale](https://github.com/jaseci-labs/jaseci
 
 The tool registers itself as a `jac` subcommand, so after installation you run `jac loadtest` alongside `jac start`, `jac deploy`, and the rest of the jac ecosystem.
 
-## Status
-
-**Phase 0 complete** — package skeleton and import tree wired. `jac loadtest --help` works.
-See [ROADMAP](docs/ROADMAP.md) for the full delivery plan.
-
-## Quick Start (Phase 1 — coming soon)
+## Quick Start
 
 ```bash
 # Minimal: 1 VU, 30s
@@ -33,10 +28,13 @@ jac loadtest recording.har --url http://localhost:8000 \
 conda create -n load python=3.12
 conda activate load
 
-# 2. Install dependencies and the package in editable mode
-pip install -r requirements.txt
+# 2. Install the package in editable mode (runtime deps only)
+pip install -e .
 
-# 3. Verify the command is registered
+# 3. Also install test dependencies (when running tests)
+pip install -e ".[test]"
+
+# 4. Verify the command is registered
 jac loadtest --help
 ```
 
@@ -53,6 +51,10 @@ jac_loadtest/
 ```
 
 The hard boundary between `core/` and `bridge/` is what keeps the eventual migration to `jac-scale[loadtest]` a file move rather than a rewrite.
+
+## HAR Compatibility
+
+Tested with HAR **1.1** and **1.2** (the format exported by Chrome DevTools, Firefox, Postman, and Insomnia). Files from other versions are parsed with a warning — open an issue if something breaks.
 
 ## Documentation
 
