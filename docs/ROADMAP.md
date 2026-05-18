@@ -21,29 +21,36 @@ mechanism jac-scale uses. Stage 2 moves the code into jac-scale; the command nam
 - [x] Register `JacMetaImporter` at top of `cli.py` before any jac_scale imports
 - [x] Add empty module stubs so the full import tree resolves from day one
 - [x] Confirm `jac loadtest --help` runs without error
+- [x] Add `[project.optional-dependencies] test = [...]` and `[tool.pytest.ini_options]` to `pyproject.toml`
+- [x] Create `tests/` directory with `conftest.py` (`make_har()` + `fake_server()` fixtures)
 
 **Exit criterion:** `jac loadtest --help` prints usage. ✓
 
 **Notes from implementation:**
-- `Arg.create()` is the correct factory (not `Arg(...)`); uses `typ=` not `type=`; `typ=bool` for boolean flags (no `ArgKind.FLAG` needed)
 - `Arg.create()` auto-generates a short flag from the first letter of the name — all args use `short=""` to disable this since 25+ args produce many first-letter conflicts
-- `setuptools.backends.legacy:build` requires setuptools ≥ 70.1; use `setuptools.build_meta` for broad compatibility
 - Command registration must happen at module import time via a module-level decorator; the entry-point can point directly to the registered function — no marker class needed for a standalone new command (a `JacCmd` class with `@hookimpl create_cmd` is only needed when extending *existing* jac commands)
+- `plugin.py` handler must use `**kwargs` signature — jaclang's `run_handler` calls `spec.handler(**filtered_args)`; a positional `args` param receives nothing. Use `types.SimpleNamespace(**kwargs)` to bridge into `from_args()`
 
 ---
 
-### Phase 1 — MVP (HAR replay + console report)
+### Phase 1 — MVP (HAR replay + console report) ✓
 > First working end-to-end path. No auth, no microservices.
 
-- [ ] `core/har_parser.py` — parse HAR 1.2, filter non-API entries (skip image/font/css), URL rewrite
-- [ ] `core/engine.py` — asyncio VU coroutines, duration cap, `aiohttp.ClientSession` with timeout
-- [ ] `core/metrics.py` — `RequestResult` dataclass, latency collection, p50/p95/p99 calc
-- [ ] `output/reporter.py` — Rich console table (per-endpoint rows + overall summary footer)
-- [ ] `config.py` — `LoadTestConfig` dataclass with built-in defaults (no jac.toml yet)
-- [ ] Wire `--url`, `--vus`, `--duration`, `--timeout` flags in `cli.py`
-- [ ] End-to-end smoke test against a local HTTP server
+- [x] `core/har_parser.py` — parse HAR 1.2, filter non-API entries (skip image/font/css), URL rewrite
+- [x] `core/engine.py` — asyncio VU coroutines, duration cap, `aiohttp.ClientSession` with timeout
+- [x] `core/metrics.py` — `RequestResult` dataclass, latency collection, p50/p95/p99 calc
+- [x] `output/reporter.py` — Rich console table (per-endpoint rows + overall summary footer)
+- [x] `config.py` — `LoadTestConfig` dataclass + `parse_duration()` helper (s/m/h only)
+- [x] Wire `--url`, `--vus`, `--duration`, `--timeout` flags in `cli.py`
+- [x] `tests/unit/test_har_parser.py` — MIME filter, URL rewrite, header sanitization, login detection, security warning, HAR 1.1 compat (15 tests)
+- [x] `tests/unit/test_metrics.py` — percentile math, path normalization, three-layer storage, error breakdown (16 tests)
+- [x] `tests/fixtures/minimal.har` + `tests/fixtures/mixed_static.har`
+- [x] HAR version check — warn to stderr for untested versions; HAR 1.1 and 1.2 are the supported set; documented in `README.md`
 
-**Exit criterion:** `jac loadtest recording.har --url http://localhost:8000 --vus 10 --duration 30s` completes and prints a summary table.
+**Exit criterion:** `jac loadtest recording.har --url http://localhost:8000 --vus 10 --duration 30s` completes and prints a summary table. `pytest -m unit` passes. ✓
+
+**Notes from implementation:**
+- Several Phase 4 items were pulled forward and implemented here: `error_type`/`error_breakdown` on results, `normalize_path()`, three-layer metrics storage, and HAR security warning — see Phase 4 for the remaining hardening work
 
 ---
 
@@ -58,8 +65,10 @@ mechanism jac-scale uses. Stage 2 moves the code into jac-scale; the command nam
 - [ ] Ramp-up in `engine.py`: `--ramp-up Ns` staggers VU startup
 - [ ] Config three-layer resolution in `config.py`: jac.toml `[plugins.scale.loadtest]` → CLI flags → built-in defaults
 - [ ] `--login-path` override flag (default `/user/login`)
+- [ ] `tests/integration/test_auth.py` — login flow, JWT injection, credentials file assignment, cookie jar, no-credentials path
+- [ ] `tests/unit/test_config.py` — three-layer resolution, CLI wins, missing toml fallback
 
-**Exit criterion:** `jac loadtest recording.har --url http://... --vus 10 --credentials-file creds.csv` runs with 0 auth errors in report.
+**Exit criterion:** `jac loadtest recording.har --url http://... --vus 10 --credentials-file creds.csv` runs with 0 auth errors in report. `pytest -m unit -m integration` passes.
 
 ---
 
@@ -70,32 +79,35 @@ mechanism jac-scale uses. Stage 2 moves the code into jac-scale; the command nam
 - [ ] Longest-prefix matching (mirrors jac-scale gateway routing algorithm)
 - [ ] `--mode microservice` flag
 - [ ] `--services-map '{"svc":"http://host:port"}'` explicit JSON override
-- [ ] Auto-discovery from `./jac.toml` `[plugins.scale.microservices]` when no `--services-map`
+- [ ] Auto-discovery from `./jac.toml` `[plugins.scale.microservices.routes]` + `JAC_SV_*_URL` env vars when no `--services-map`
 - [ ] Per-service `RequestResult.service` field populated
 - [ ] Per-service metrics breakdown in console reporter
 - [ ] Per-service column in JSON report
+- [ ] `tests/unit/test_topology.py` — monolith routing, services-map JSON, longest-prefix, jac.toml discovery (with patched env vars), missing config error
+- [ ] `tests/fixtures/microservice.toml` — fixture jac.toml with `[plugins.scale.microservices.routes]`
 
-**Exit criterion:** `jac loadtest recording.har --mode microservice --services-map '{...}' --vus 10 --duration 30s` reports per-service latency and error rates.
+**Exit criterion:** `jac loadtest recording.har --mode microservice --services-map '{...}' --vus 10 --duration 30s` reports per-service latency and error rates. `pytest -m unit` passes.
 
 ---
 
 ### Phase 4 — Production Hardening
 > Reliable under pressure: clean shutdown, CI-compatible exit codes, network error classification.
 
-- [ ] Graceful shutdown — two-signal model: first `Ctrl+C` sets `asyncio.Event(stop_requested)`, VUs finish current iteration then exit and generate report; second `Ctrl+C` kills immediately
+- [x] Graceful shutdown — two-signal model: first `Ctrl+C` sets `asyncio.Event(stop_requested)`, VUs finish current iteration then exit and generate report; second `Ctrl+C` kills immediately *(implemented in Phase 1)*
 - [ ] Exit codes: `0` = completed + all thresholds pass, `1` = threshold failed, `2` = config/tool error
 - [ ] Threshold flags: `--fail-on-error-rate N`, `--fail-on-p95 N`, `--fail-on-p99 N`
 - [ ] `--abort-on-fail` — stop test immediately when any threshold is first breached
 - [ ] `--threshold-start-delay Ns` — delay pass/fail evaluation (cold-start protection); metrics still collected from t=0
 - [ ] RPS cap: `--rps N` via token bucket (`asyncio.Semaphore`)
-- [ ] `error_type` on `RequestResult`: `None` | `"TIMEOUT"` | `"CONNECTION_REFUSED"` | `"DNS_ERROR"` | `"SSL_ERROR"`
-- [ ] `error_breakdown` in `EndpointStats`: `{"500": 3, "TIMEOUT": 2}`
-- [ ] Endpoint normalization: `normalize_path()` replaces UUID/integer segments with `{id}`
-- [ ] HAR security warning: scan for `Authorization`/`Cookie` headers at startup, warn to stderr
-- [ ] Three-layer metrics storage: `total_count` int (RPS) + `deque(maxlen=N)` (percentiles) + `list[StatsSnapshot]` every 5s (time-series)
-- [ ] `--max-samples N` flag to bound deque size
+- [ ] `error_type` on `RequestResult`: `None` | `"TIMEOUT"` | `"CONNECTION_REFUSED"` | `"DNS_ERROR"` | `"SSL_ERROR"` — field and `TIMEOUT`/`CONNECTION_REFUSED` done in Phase 1; `DNS_ERROR` and `SSL_ERROR` catch blocks still needed
+- [x] `error_breakdown` in `EndpointStats`: `{"500": 3, "TIMEOUT": 2}` *(implemented in Phase 1)*
+- [x] Endpoint normalization: `normalize_path()` replaces UUID/integer segments with `{id}` *(implemented in Phase 1)*
+- [x] HAR security warning: scan for `Authorization`/`Cookie` headers at startup, warn to stderr *(implemented in Phase 1)*
+- [x] Three-layer metrics storage: `total_count` int (RPS) + `deque(maxlen=N)` (percentiles) + `list[StatsSnapshot]` every 5s (time-series) *(implemented in Phase 1)*
+- [x] `--max-samples N` flag to bound deque size *(implemented in Phase 1)*
+- [ ] `tests/integration/test_engine.py` — VU lifecycle, duration/iteration caps, ramp-up stagger, graceful shutdown, RPS cap, TIMEOUT/CONNECTION_REFUSED error types, per-VU session isolation
 
-**Exit criterion:** interrupted test at minute 9 of 10 still generates a partial report. CI pipeline `if [ $? -ne 0 ]` correctly detects threshold failures.
+**Exit criterion:** interrupted test at minute 9 of 10 still generates a partial report. CI pipeline `if [ $? -ne 0 ]` correctly detects threshold failures. `pytest -m integration` passes.
 
 ---
 
@@ -109,17 +121,19 @@ mechanism jac-scale uses. Stage 2 moves the code into jac-scale; the command nam
 - [ ] `--report-out path` flag for JSON/HTML destination
 - [ ] `--debug` flag: per-request lines to stderr
 - [ ] `--include-static` flag: include image/font/css entries in replay
+- [ ] `tests/integration/test_reporter.py` — JSON schema, stdout/file routing, HTML self-contained, console to stderr
+- [ ] `tests/e2e/test_smoke.py` — full pipeline: HAR → engine → JSON report, exit code 0, total request count correct
 
-**Exit criterion:** `jac loadtest ... --report-format html --report-out report.html` produces a self-contained HTML file with charts.
+**Exit criterion:** `jac loadtest ... --report-format html --report-out report.html` produces a self-contained HTML file with charts. `pytest -m e2e` passes.
 
 ---
 
 ### Phase 6 — Package + Release
 > Ready for PyPI and supervisor review.
 
-- [ ] Unit tests: `tests/test_har_parser.py`, `tests/test_metrics.py`, `tests/test_topology.py`
-- [ ] Integration test: local jac-scale app + HAR capture → `jac loadtest` end-to-end
-- [ ] Auth integration test: register test user, run with `--username`/`--password`, verify 0 auth errors
+- [ ] All `pytest -m unit`, `pytest -m integration`, `pytest -m e2e` must pass cleanly
+- [ ] Integration test: local jac-scale app + HAR capture → `jac loadtest` end-to-end (manual verification)
+- [ ] Auth integration test: register test user, run with `--username`/`--password`, verify 0 auth errors (manual verification)
 - [ ] `README.md` with install instructions and usage examples
 - [ ] `DESIGN.md` finalized (rationale behind key decisions)
 - [ ] `pyproject.toml` polished: classifiers, description, license, version

@@ -71,6 +71,7 @@ registry = get_registry()
     group="testing",
     source="jac-loadtest",
 )
-def loadtest(args: object) -> None:
+def loadtest(**kwargs) -> None:
+    import types
     from jac_loadtest.cli import run
-    run(args)
+    run(types.SimpleNamespace(**kwargs))

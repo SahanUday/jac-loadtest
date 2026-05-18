@@ -62,9 +62,9 @@ def percentile(latencies: list[float], p: float) -> float:
 
 
 def normalize_path(url: str) -> str:
-    """Replace UUID and integer path segments with {id}."""
+    """Replace UUID and integer path segments with {id}, preserving full URL."""
     import re
-    from urllib.parse import urlparse
+    from urllib.parse import urlparse, urlunparse
     parsed = urlparse(url)
     segments = parsed.path.split("/")
     normalized = []
@@ -75,7 +75,8 @@ def normalize_path(url: str) -> str:
             normalized.append("{id}")
         else:
             normalized.append(seg)
-    return "/".join(normalized)
+    normalized_path = "/".join(normalized)
+    return urlunparse((parsed.scheme, parsed.netloc, normalized_path, parsed.params, parsed.query, ""))
 
 
 class MetricsCollector:
@@ -89,4 +90,72 @@ class MetricsCollector:
         self._samples.append(result)
 
     def compute_endpoint_stats(self, duration_seconds: float) -> list[EndpointStats]:
-        raise NotImplementedError("Metrics aggregation is implemented in Phase 1.")
+        """Aggregate per-endpoint stats from collected samples."""
+        groups: dict[str, list[RequestResult]] = {}
+        for result in self._samples:
+            groups.setdefault(result.endpoint, []).append(result)
+
+        stats: list[EndpointStats] = []
+        safe_duration = max(duration_seconds, 0.001)
+
+        for endpoint, results in groups.items():
+            latencies = [r.latency_ms for r in results]
+            total = len(results)
+            success_count = sum(
+                1 for r in results if r.error_type is None and 200 <= r.status < 300
+            )
+            error_count = total - success_count
+            success_rate = (success_count / total * 100.0) if total else 0.0
+
+            error_breakdown: dict[str, int] = {}
+            for r in results:
+                if r.error_type is not None:
+                    key = r.error_type
+                elif not (200 <= r.status < 300):
+                    key = str(r.status)
+                else:
+                    continue
+                error_breakdown[key] = error_breakdown.get(key, 0) + 1
+
+            service = results[0].service if results else "monolith"
+
+            stats.append(
+                EndpointStats(
+                    endpoint=endpoint,
+                    service=service,
+                    total_requests=total,
+                    success_count=success_count,
+                    error_count=error_count,
+                    success_rate_pct=round(success_rate, 1),
+                    min_ms=min(latencies) if latencies else 0.0,
+                    max_ms=max(latencies) if latencies else 0.0,
+                    mean_ms=sum(latencies) / len(latencies) if latencies else 0.0,
+                    p50_ms=percentile(latencies, 50),
+                    p95_ms=percentile(latencies, 95),
+                    p99_ms=percentile(latencies, 99),
+                    rps=self.total_count / safe_duration,
+                    error_breakdown=error_breakdown,
+                )
+            )
+
+        return stats
+
+    def flush_snapshot(self, timestamp: float, duration_seconds: float) -> None:
+        """Record a 5-second interval snapshot (for time-series charts)."""
+        latencies = [r.latency_ms for r in self._samples]
+        safe_duration = max(duration_seconds, 0.001)
+        total = len(self._samples)
+        error_count = sum(
+            1 for r in self._samples
+            if r.error_type is not None or not (200 <= r.status < 300)
+        )
+        self._snapshots.append(
+            StatsSnapshot(
+                timestamp=timestamp,
+                p50_ms=percentile(latencies, 50),
+                p95_ms=percentile(latencies, 95),
+                p99_ms=percentile(latencies, 99),
+                rps=self.total_count / safe_duration,
+                error_rate_pct=(error_count / total * 100.0) if total else 0.0,
+            )
+        )

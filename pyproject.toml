@@ -13,8 +13,25 @@ dependencies = [
 [project.entry-points."jac"]
 loadtest = "jac_loadtest.plugin:loadtest"
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-mock>=3.12",
+    "aiohttp[speedups]>=3.9",
+]
+
 [tool.setuptools.packages.find]
 include = ["jac_loadtest*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "unit: pure logic, no network",
+    "integration: in-process aiohttp test server",
+    "e2e: full pipeline smoke test",
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]
