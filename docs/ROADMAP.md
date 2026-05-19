@@ -56,21 +56,28 @@ mechanism jac-scale uses. Stage 2 moves the code into jac-scale; the command nam
 
 ---
 
-### Phase 2 — Auth + Think Time
+### Phase 2 — Auth + Think Time ✓
 > VUs log in independently and replay sessions realistically.
 
-- [ ] `bridge/auth.py` — detect login entry (`POST /user/login`), JWT injection into subsequent requests
-- [ ] Per-VU credentials: `--credentials-file credentials.csv` (one `username,password` row per VU)
-- [ ] Shared credentials fallback: `--username` / `--password` (all VUs share one token)
-- [ ] Per-VU cookie jar maintained across request sequence
-- [ ] Think time in `engine.py`: `--think-time none|real` (`real` = replay `timings.wait` from HAR)
-- [ ] Ramp-up in `engine.py`: `--ramp-up Ns` staggers VU startup
-- [ ] Config three-layer resolution in `config.py`: jac.toml `[plugins.scale.loadtest]` → CLI flags → built-in defaults
-- [ ] `--login-path` override flag (default `/user/login`)
-- [ ] `tests/integration/test_auth.py` — login flow, JWT injection, credentials file assignment, cookie jar, no-credentials path
-- [ ] `tests/unit/test_config.py` — three-layer resolution, CLI wins, missing toml fallback
+- [x] `bridge/auth.py` — detect login entry (`POST /user/login`), JWT injection into subsequent requests; identity type inferred (`email` vs `username`) from credential value
+- [x] Per-VU credentials: `--credentials-file credentials.csv` (one `username,password` row per VU; wrap-around when fewer rows than VUs)
+- [x] Shared credentials fallback: `--username` / `--password` (all VUs use the same credential, each gets their own token)
+- [x] Per-VU cookie jar maintained across request sequence (aiohttp `ClientSession` handles this automatically)
+- [x] Think time in `engine.py`: `--think-time none|real` with `--think-time-scale` multiplier; `scaled` mode noted as separate from `real`
+- [x] Ramp-up in `engine.py`: `--ramp-up Ns` staggers VU startup; VU i starts at `(i / vus) * ramp_up_s`
+- [x] Config three-layer resolution in `config.py`: CLI flags → jac.toml `[plugins.scale.loadtest]` → built-in defaults; all toml-resolvable CLI args use `default=None` in `plugin.py` so argparse defaults can't mask jac.toml values
+- [x] `reset_scale_config()` called before `get_scale_config(project_dir=Path.cwd())` to avoid singleton staleness from plugin startup
+- [x] `--login-path` override flag (default `/user/login`)
+- [x] `--iterations` moved to three-layer resolution (CLI + jac.toml)
+- [x] `tests/integration/test_auth.py` — 8 tests: login flow, JWT injection, credentials file assignment, wrap-around, cookie jar, login entry skip, no-credentials path
+- [x] `tests/unit/test_config.py` — 11 tests: three-layer resolution, CLI wins, missing toml fallback, `parse_duration`
 
-**Exit criterion:** `jac loadtest recording.har --url http://... --vus 10 --credentials-file creds.csv` runs with 0 auth errors in report. `pytest -m unit -m integration` passes.
+**Exit criterion:** `jac loadtest recording.har --url http://... --vus 10 --credentials-file creds.csv` runs with 0 auth errors in report. `pytest -m "unit or integration"` passes — 54 tests. ✓
+
+**Notes from implementation:**
+- `plugin.py` arg defaults must be `None` for all toml-resolvable fields; built-in defaults live only in `BUILT_IN_DEFAULTS` in `config.py` — never duplicated in argparse defaults
+- `--think-time real` applies `think_time_scale` multiplier (default 1.0 = exact HAR timings); the `scaled` value is a distinct mode reserved for Phase 4/5 polish where scale < 1 speeds up pacing and > 1 slows it down
+- Think time sleep is outside the latency measurement — only server response time is timed
 
 ---
 

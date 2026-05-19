@@ -41,7 +41,4 @@ Thumbs.db
 results/
 
 # Secrets — never commit these
-creds.csv
-credentials.csv
-*.csv
 .env

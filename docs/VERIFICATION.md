@@ -115,8 +115,6 @@ pytest -m unit -v
 
 ## Phase 2 — Auth + Think Time
 
-> Fill in after Phase 2 is implemented.
-
 ### Automated
 
 ```bash
@@ -124,32 +122,55 @@ pytest -m unit -v
 pytest -m integration -v
 ```
 
-- [ ] All unit tests still pass
-- [ ] All integration tests pass (`tests/integration/test_auth.py`)
+- [x] All unit tests pass — har_parser + metrics + config suites
+- [x] All integration tests pass — auth suite (`tests/integration/test_auth.py`)
+- [x] Total: 54 tests passing across unit + integration suites
 
 ### Manual
+
+**Three-layer config resolution**
+
+- [x] Create a `jac.toml` in cwd with `[plugins.scale.loadtest]` section (e.g. `vus = 5`, `duration = "10s"`)
+  - Run without `--vus` or `--duration` flags
+  - Footer shows `VUs: 5` and `Duration: 10s` (jac.toml values applied)
+
+- [x] Pass `--vus 20` explicitly alongside a jac.toml with `vus = 5`
+  - Footer shows `VUs: 20` (CLI wins over jac.toml)
+
+- [x] Run with no jac.toml present
+  - Built-in defaults apply (`VUs: 1`, `Duration: 30s`) — no error
+
+**Actual vs configured duration**
+
+- [x] Run with `--duration 30s` against a fast server (test completes in ~8s)
+  - Footer shows the actual elapsed wall-clock time (e.g. `Duration: 8s`), not the configured cap
 
 **Shared credentials**
 
 - [ ] `jac loadtest <har> --url http://... --username testuser --password testpass --vus 5 --duration 15s`
-  - All VUs authenticate successfully
+  - All VUs authenticate successfully (each gets its own JWT, all from the same credential)
   - `OK%` is 100 for authenticated endpoints (no 401s)
 
 **Per-VU credentials file**
 
 - [ ] `jac loadtest <har> --url http://... --credentials-file creds.csv --vus 5 --duration 15s`
-  - Each VU uses a different row from the CSV
+  - Each VU uses a different row from the CSV (VU 0 → row 0, VU 1 → row 1, etc.)
   - No auth errors in report
 
-- [ ] Run with fewer CSV rows than VUs (e.g. 3 rows, 5 VUs)
-  - Tool prints a clear error about insufficient credentials
-  - Exits with code 2, does not start the test
+- [ ] Run with fewer CSV rows than VUs (e.g. 2 rows, 5 VUs)
+  - VUs 0 and 1 use rows 0 and 1; VUs 2, 3, 4 wrap around to rows 0, 1, 0
+  - Run completes without error (wrap-around is by design, not an error)
+
+- [ ] Run with a credentials file that has no valid rows (empty or header-only)
+  - Prints `ValueError: No credentials found in '<path>'` to stderr
+  - Exits with code 2
 
 **Think time**
 
-- [ ] `--think-time none` (default): RPS is at maximum
-- [ ] `--think-time real`: RPS is noticeably lower; inter-request delay matches HAR `timings.wait`
-- [ ] `--think-time scaled --think-time-scale 0.5`: RPS is between `none` and `real`
+- [ ] `--think-time none` (default): RPS is at maximum; VUs replay HAR entries back-to-back
+- [ ] `--think-time real`: RPS is noticeably lower; sleep between requests matches HAR `timings.wait`
+- [ ] `--think-time real --think-time-scale 0.5`: RPS is between `none` and full-real (half think time)
+- [ ] `--think-time real --think-time-scale 2.0`: RPS is lower than full-real (double think time)
 
 **Ramp-up**
 

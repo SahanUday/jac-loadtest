@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from jac_loadtest.config import LoadTestConfig
 
 
-def render_console(stats: list[EndpointStats], config: LoadTestConfig) -> None:
+def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_duration_s: float | None = None) -> None:
     """Print a Rich summary table to stderr."""
     from rich.console import Console
     from rich.table import Table
@@ -76,9 +76,9 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig) -> None:
 
     console.print(table)
 
-    duration_s = parse_duration(config.duration)
+    display_duration = actual_duration_s if actual_duration_s is not None else parse_duration(config.duration)
     console.print(
-        f"Duration: {duration_s:.0f}s   VUs: {config.vus}   "
+        f"Duration: {display_duration:.0f}s   VUs: {config.vus}   "
         f"Ramp-up: {config.ramp_up}   Mode: {config.mode}"
     )
 
