@@ -148,7 +148,7 @@ Use `--include-static` to disable filtering and replay everything.
 jac_loadtest/
 ├── plugin.py           Registers `jac loadtest` via jaclang CommandRegistry (entry-points hook)
 ├── cli.py              Argument parsing and module wiring — called by plugin.py
-├── config.py           LoadTestConfig — three-layer resolution: jac.toml → CLI flags → defaults
+├── config.py           LoadTestConfig — three-layer resolution: CLI flags → jac.toml → built-in defaults
 │
 ├── core/               ← NO jac-scale knowledge. Works with any HTTP server.
 │   ├── har_parser.py   Parse HAR 1.2, filter entries, rewrite URLs
@@ -218,9 +218,10 @@ registry = get_registry()
     args=[
         Arg.create("har_file", kind=ArgKind.POSITIONAL, help="Path to .har file"),
         Arg.create("url",      typ=str, default=None, short="", help="Target base URL"),
-        Arg.create("vus",      typ=int, default=1,    short="", help="Number of virtual users"),
-        Arg.create("duration", typ=str, default="30s",short="", help="Test duration (e.g. 30s, 2m)"),
-        # ... remaining flags, all with short=""
+        Arg.create("vus",      typ=int, default=None, short="", help="Number of virtual users"),
+        Arg.create("duration", typ=str, default=None, short="", help="Test duration (e.g. 30s, 2m)"),
+        # ... all toml-resolvable flags use default=None so resolve() can detect "not passed"
+        # ... CLI-only flags (url, username, password, etc.) also use default=None
     ],
     group="testing",
     source="jac-loadtest",
@@ -270,29 +271,49 @@ Priority 3 — Built-in default  (hardcoded in config.py)   ← always present
 
 ### How It Works
 
-jac-scale's `PluginConfigBase` (from `jaclang.project.plugin_config`) handles jac.toml
-reading, deep-merge with defaults, and caching automatically. `config.py` calls:
+`config.py` reads `[plugins.scale.loadtest]` from `jac.toml` using jac-scale's native
+config API, then applies CLI values on top via a `resolve()` helper:
 
 ```python
-from jac_scale.config_loader import get_scale_config
+def _load_toml_defaults() -> dict:
+    try:
+        from pathlib import Path
+        from jac_scale.config_loader import get_scale_config, reset_scale_config
+        reset_scale_config()
+        scale_config = get_scale_config(project_dir=Path.cwd())
+        return scale_config.get_section("loadtest")
+    except Exception:
+        return {}   # jac.toml absent or section missing — fall through to built-in defaults
 
-toml_config = get_scale_config().get_section("loadtest", defaults=BUILT_IN_DEFAULTS)
+def from_args(args) -> LoadTestConfig:
+    toml = _load_toml_defaults()
+
+    def resolve(name):
+        cli_val = getattr(args, name, None)
+        if cli_val is not None:   # user explicitly passed this flag
+            return cli_val
+        if name in toml:          # jac.toml has a value
+            return toml[name]
+        return BUILT_IN_DEFAULTS.get(name)   # last resort
+
+    return LoadTestConfig(
+        vus      = resolve("vus"),
+        duration = resolve("duration"),
+        timeout  = resolve("timeout"),
+        # ... same pattern for all toml-resolvable fields
+    )
 ```
 
-This reads `[plugins.scale.loadtest]` from `jac.toml`, deep-merging with built-in defaults
-so missing keys always fall through to the default. CLI flags are then applied on top:
+`reset_scale_config()` is called before each lookup to ensure the singleton is always
+initialized from `Path.cwd()` — the directory the user ran `jac loadtest` from. Without
+this, a prior jac-scale plugin initialization could set the singleton to a different path.
 
-```python
-LoadTestConfig(
-    vus      = cli_args.vus      if cli_args.vus      is not None else toml_config["vus"],
-    duration = cli_args.duration if cli_args.duration is not None else toml_config["duration"],
-    timeout  = cli_args.timeout  if cli_args.timeout  is not None else toml_config["timeout"],
-    # ... same pattern for all flags
-)
-```
+Plugin args use `default=None` for all toml-resolvable flags so `resolve()` can detect
+"user did not pass this flag" as `getattr(...) is None`. Built-in defaults live only in
+`BUILT_IN_DEFAULTS`, not in the argparse layer.
 
-If `jac.toml` does not exist, `get_scale_config()` returns all built-in defaults — the
-tool works in any directory with no configuration file required.
+If `jac.toml` does not exist, `_load_toml_defaults()` returns `{}` — the tool works in
+any directory with no configuration file required.
 
 ### jac.toml Example
 
@@ -337,13 +358,6 @@ per environment, or contain sensitive data that must not be version-controlled:
 | `--username` / `--password` | Security-sensitive |
 | `--services-map` | Environment-specific URL overrides |
 | `--report-out` | Output path changes per run |
-
-### Phase 2 migration
-
-When jac-loadtest is absorbed into jac-scale, the `loadtest` section is added to
-`JacScalePluginConfig.get_config_schema()` as a new nested entry — the same pattern
-used by `microservices`, `monitoring`, and `events`. Existing user `jac.toml` files
-that already have `[plugins.scale.loadtest]` continue to work without any changes.
 
 ---
 
@@ -1039,7 +1053,7 @@ be set under `[plugins.scale.loadtest]` in your project's `jac.toml`.
 | `--mode` | `monolith` | Yes | `monolith` or `microservice` |
 | `--vus` / `-v` | `1` | Yes | Number of virtual users |
 | `--duration` / `-d` | `30s` | Yes | Test duration. Accepts `30s`, `2m`, `1h` |
-| `--iterations` | — | Yes | Iteration cap per VU. Alternative to `--duration`. |
+| `--iterations` | — | Yes | Iteration cap per VU. Alternative to `--duration`. First limit reached wins. |
 | `--ramp-up` | `0s` | Yes | Time to ramp up to full VU count |
 | `--timeout` | `30s` | Yes | Per-request timeout. Exceeded requests recorded as TIMEOUT error. |
 | `--think-time` | `none` | Yes | `none`, `real`, or `scaled` |

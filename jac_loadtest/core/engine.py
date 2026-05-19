@@ -54,6 +54,7 @@ async def run_all_vus(
                 metrics=metrics,
                 stop_requested=stop_requested,
                 loop=loop,
+                auth_provider=auth_provider,
             )
         )
         for i in range(config.vus)
@@ -73,8 +74,9 @@ async def _run_vu(
     metrics: MetricsCollector,
     stop_requested: asyncio.Event,
     loop: asyncio.AbstractEventLoop,
+    auth_provider: object | None = None,
 ) -> None:
-    """Single virtual user: wait ramp delay, then replay HAR entries repeatedly."""
+    """Single virtual user: wait ramp delay, authenticate, then replay HAR entries."""
     if delay > 0:
         await asyncio.sleep(delay)
 
@@ -84,6 +86,11 @@ async def _run_vu(
     iteration = 0
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
+        # Authenticate once before entering the request loop.
+        token: str | None = None
+        if auth_provider is not None:
+            token = await auth_provider.authenticate(vu_id, session, config.url)
+
         while not stop_requested.is_set():
             if loop.time() - t_start >= duration_seconds:
                 break
@@ -93,14 +100,22 @@ async def _run_vu(
             for entry in entries:
                 if stop_requested.is_set():
                     break
+                # Skip the HAR-recorded login; auth is handled by the pre-loop step.
+                if entry.is_login and token is not None:
+                    continue
                 result = await _send_request(
                     session=session,
                     entry=entry,
                     vu_id=vu_id,
                     config=config,
                     loop=loop,
+                    token=token,
                 )
                 metrics.record(result)
+                if config.think_time == "real" and entry.think_time_ms > 0:
+                    await asyncio.sleep(
+                        entry.think_time_ms / 1000.0 * config.think_time_scale
+                    )
 
             iteration += 1
 
@@ -111,9 +126,12 @@ async def _send_request(
     vu_id: int,
     config: LoadTestConfig,
     loop: asyncio.AbstractEventLoop,
+    token: str | None = None,
 ) -> RequestResult:
     """Send one HTTP request and return a RequestResult."""
     headers = dict(entry.headers)
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     t0 = loop.time()
 
     try:

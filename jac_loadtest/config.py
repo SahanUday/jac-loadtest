@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 BUILT_IN_DEFAULTS: dict = {
     "vus": 1,
     "duration": "30s",
+    "iterations": None,
     "ramp_up": "0s",
     "timeout": "30s",
     "mode": "monolith",
@@ -84,40 +85,64 @@ def parse_duration(s: str) -> float:
     return float(s)
 
 
-def from_args(args: object) -> LoadTestConfig:
-    """Build LoadTestConfig by applying CLI args on top of built-in defaults.
+def _load_toml_defaults() -> dict:
+    """Read [plugins.scale.loadtest] from jac.toml using jac-scale's native config API.
 
-    Phase 2 will insert a jac.toml layer between defaults and CLI args.
+    Returns an empty dict if jac.toml is absent, the section is missing, or
+    the import fails (e.g. jac-scale not installed in a minimal test env).
     """
-    def get(name: str, default=None):
-        return getattr(args, name, default)
+    try:
+        from pathlib import Path
+        from jac_scale.config_loader import get_scale_config, reset_scale_config
+        reset_scale_config()
+        scale_config = get_scale_config(project_dir=Path.cwd())
+        return scale_config.get_section("loadtest")
+    except Exception:
+        return {}
+
+
+def from_args(args: object) -> LoadTestConfig:
+    """Build LoadTestConfig using three-layer resolution: CLI > jac.toml > built-in defaults."""
+    toml = _load_toml_defaults()
+
+    # For toml-sourced fields, use CLI value if provided (not None), else toml value,
+    # else built-in default.
+    def resolve(name: str) -> object:
+        cli_val = getattr(args, name, None)
+        if cli_val is not None:
+            return cli_val
+        if name in toml:
+            return toml[name]
+        return BUILT_IN_DEFAULTS.get(name)
 
     return LoadTestConfig(
-        har_file=get("har_file", ""),
-        url=get("url"),
-        mode=get("mode", BUILT_IN_DEFAULTS["mode"]),
-        vus=get("vus", BUILT_IN_DEFAULTS["vus"]),
-        duration=get("duration", BUILT_IN_DEFAULTS["duration"]),
-        iterations=get("iterations"),
-        ramp_up=get("ramp_up", BUILT_IN_DEFAULTS["ramp_up"]),
-        timeout=get("timeout", BUILT_IN_DEFAULTS["timeout"]),
-        think_time=get("think_time", BUILT_IN_DEFAULTS["think_time"]),
-        think_time_scale=get("think_time_scale", BUILT_IN_DEFAULTS["think_time_scale"]),
-        username=get("username"),
-        password=get("password"),
-        credentials_file=get("credentials_file"),
-        login_path=get("login_path", BUILT_IN_DEFAULTS["login_path"]),
-        include_static=get("include_static", BUILT_IN_DEFAULTS["include_static"]),
-        rps=get("rps", BUILT_IN_DEFAULTS["rps"]),
-        max_samples=get("max_samples", BUILT_IN_DEFAULTS["max_samples"]),
-        services_map=get("services_map"),
-        csrf=get("csrf", BUILT_IN_DEFAULTS["csrf"]),
-        fail_on_error_rate=get("fail_on_error_rate"),
-        fail_on_p95=get("fail_on_p95"),
-        fail_on_p99=get("fail_on_p99"),
-        abort_on_fail=get("abort_on_fail", BUILT_IN_DEFAULTS["abort_on_fail"]),
-        threshold_start_delay=get("threshold_start_delay", BUILT_IN_DEFAULTS["threshold_start_delay"]),
-        report_format=get("report_format", BUILT_IN_DEFAULTS["report_format"]),
-        report_out=get("report_out"),
-        debug=get("debug", BUILT_IN_DEFAULTS["debug"]),
+        # CLI-only fields: not sourced from jac.toml
+        har_file=getattr(args, "har_file", "") or "",
+        url=getattr(args, "url", None),
+        username=getattr(args, "username", None),
+        password=getattr(args, "password", None),
+        credentials_file=getattr(args, "credentials_file", None),
+        services_map=getattr(args, "services_map", None),
+        report_out=getattr(args, "report_out", None),
+        # Three-layer resolved fields
+        iterations=resolve("iterations"),
+        mode=resolve("mode"),
+        vus=resolve("vus"),
+        duration=resolve("duration"),
+        ramp_up=resolve("ramp_up"),
+        timeout=resolve("timeout"),
+        think_time=resolve("think_time"),
+        think_time_scale=resolve("think_time_scale"),
+        login_path=resolve("login_path"),
+        include_static=resolve("include_static"),
+        rps=resolve("rps"),
+        max_samples=resolve("max_samples"),
+        csrf=resolve("csrf"),
+        fail_on_error_rate=resolve("fail_on_error_rate"),
+        fail_on_p95=resolve("fail_on_p95"),
+        fail_on_p99=resolve("fail_on_p99"),
+        abort_on_fail=resolve("abort_on_fail"),
+        threshold_start_delay=resolve("threshold_start_delay"),
+        report_format=resolve("report_format"),
+        debug=resolve("debug"),
     )

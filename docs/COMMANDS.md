@@ -4,7 +4,17 @@
 jac loadtest <har_file> [options]
 ```
 
-All CLI flags override `jac.toml`. The **Use in** column shows whether the flag can also be set under `[plugins.scale.loadtest]` in your project's `jac.toml` (Phase 2+), or is CLI-only.
+Settings are resolved in three layers — the **Use in** column shows where each flag can be configured:
+
+```
+CLI flag (--vus 50)          ← always wins
+  ↓ if not passed
+jac.toml ([plugins.scale.loadtest])  ← project/team default
+  ↓ if not present
+Built-in default             ← shown in the Default column below
+```
+
+Flags marked **CLI only** are never read from `jac.toml` — they change per environment or contain sensitive credentials.
 
 ---
 
@@ -94,7 +104,7 @@ All CLI flags override `jac.toml`. The **Use in** column shows whether the flag 
 
 ## jac.toml Example
 
-Settings that are appropriate for team-wide defaults can be committed in `jac.toml`. CLI flags always override these.
+Settings appropriate for team-wide defaults can be committed in `jac.toml`. CLI flags always override these.
 
 ```toml
 [plugins.scale.loadtest]

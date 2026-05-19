@@ -46,11 +46,18 @@ def run(args: object) -> None:
         )
         sys.exit(2)
 
+    from jac_loadtest.bridge.auth import AuthProvider, AuthenticationError
+
+    auth_provider = AuthProvider.from_config(config)
     metrics = MetricsCollector(max_samples=config.max_samples)
     t_start = time.time()
 
-    asyncio.run(run_all_vus(entries, config, metrics))
+    try:
+        asyncio.run(run_all_vus(entries, config, metrics, auth_provider=auth_provider))
+    except AuthenticationError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     duration_s = time.time() - t_start
     stats = metrics.compute_endpoint_stats(duration_s)
-    render_console(stats, config)
+    render_console(stats, config, actual_duration_s=duration_s)
