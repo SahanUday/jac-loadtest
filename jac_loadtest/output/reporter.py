@@ -22,7 +22,7 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_du
     console = Console(stderr=True, highlight=False)
 
     table = Table(box=box.SIMPLE_HEAVY, show_footer=False)
-    table.add_column("Endpoint", style="cyan", no_wrap=True)
+    table.add_column("Endpoint", style="cyan", no_wrap=True, max_width=60)
     table.add_column("Reqs", justify="right")
     table.add_column("OK%", justify="right")
     table.add_column("p50", justify="right")
@@ -75,6 +75,17 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_du
         )
 
     console.print(table)
+
+    # Error breakdown — only shown when there are errors
+    endpoints_with_errors = [s for s in stats if s.error_breakdown]
+    if endpoints_with_errors:
+        console.print("[bold]Error breakdown:[/bold]")
+        for s in endpoints_with_errors:
+            breakdown_str = "  ".join(
+                f"{key}: {count}" for key, count in sorted(s.error_breakdown.items())
+            )
+            console.print(f"  {s.endpoint}  →  {breakdown_str}")
+        console.print("")
 
     display_duration = actual_duration_s if actual_duration_s is not None else parse_duration(config.duration)
     console.print(

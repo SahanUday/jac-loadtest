@@ -5,9 +5,10 @@ core/ has zero knowledge of jac-scale internals.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 
 _SKIP_MIME_PREFIXES = (
@@ -20,6 +21,23 @@ _SKIP_MIME_PREFIXES = (
 )
 
 _STRIP_HEADERS = {"authorization", "cookie", "host", "content-length"}
+
+# Browser resource types the tool cannot replay correctly.
+_SKIP_RESOURCE_TYPES = {
+    "websocket",   # protocol upgrade — tool can't speak WS
+    "eventsource", # streaming SSE — resp.read() blocks forever
+    "document",    # page navigations
+    "stylesheet",  # covered by MIME filter too
+    "script",      # covered by MIME filter too
+    "manifest",    # web app manifests
+    "texttrack",   # subtitle/caption tracks
+    "media",       # audio/video
+}
+
+# Query-param names used exclusively as cache busters.
+_CACHE_BUSTER_PARAMS = {"_", "cb", "cachebust", "cache_bust", "nocache", "bust"}
+# Unix timestamp: 10 digits (seconds) or 13 digits (milliseconds).
+_TIMESTAMP_RE = re.compile(r"^\d{10,13}$")
 
 
 @dataclass
@@ -55,6 +73,26 @@ def _is_static(mime: str) -> bool:
     return any(mime_lower.startswith(prefix) for prefix in _SKIP_MIME_PREFIXES)
 
 
+def _is_unsupported_type(entry: dict) -> bool:
+    """Return True if the entry uses a protocol or resource type the tool cannot replay."""
+    resource_type = entry.get("_resourceType", "").lower()
+    if resource_type in _SKIP_RESOURCE_TYPES:
+        return True
+    url = entry.get("request", {}).get("url", "")
+    return url.startswith(("ws://", "wss://"))
+
+
+def _has_cache_buster(url: str) -> bool:
+    """Return True if the URL contains a stale cache-busting timestamp parameter."""
+    qs = parse_qs(urlparse(url).query)
+    return any(
+        param.lower() in _CACHE_BUSTER_PARAMS
+        and values
+        and _TIMESTAMP_RE.match(values[0])
+        for param, values in qs.items()
+    )
+
+
 def parse_har(
     har_path: str,
     target_url: str,
@@ -81,16 +119,42 @@ def parse_har(
     _security_scan(raw_entries)
 
     result: list[HarEntry] = []
+    warned_unsupported = False
+    warned_cache_buster = False
+
     for entry in raw_entries:
         req = entry["request"]
         resp = entry.get("response", {})
         content = resp.get("content", {})
         mime = content.get("mimeType", "")
 
-        if not include_static and _is_static(mime):
+        if _is_unsupported_type(entry):
+            if not warned_unsupported:
+                print(
+                    "Warning: HAR contains WebSocket, SSE, or non-API entries "
+                    "(websocket, eventsource, document, etc.). "
+                    "These are skipped automatically.",
+                    file=sys.stderr,
+                )
+                warned_unsupported = True
             continue
 
         original_url = req["url"]
+
+        if _has_cache_buster(original_url):
+            if not warned_cache_buster:
+                print(
+                    "Warning: HAR contains URLs with cache-busting timestamp "
+                    "parameters (e.g. ?_=<timestamp>). These entries are skipped — "
+                    "the stale timestamp causes the server to reject the request.",
+                    file=sys.stderr,
+                )
+                warned_cache_buster = True
+            continue
+
+        if not include_static and _is_static(mime):
+            continue
+
         rewritten_url = _rewrite_url(original_url, recorded_origin, target_url)
 
         headers = _sanitize_headers(req.get("headers", []))
@@ -153,9 +217,10 @@ def _security_scan(entries: list[dict]) -> None:
 
 
 def _sanitize_headers(raw_headers: list[dict]) -> dict[str, str]:
-    """Strip session-specific headers; return clean dict."""
+    """Strip session-specific and HTTP/2 pseudo-headers; return clean dict."""
     return {
         h["name"]: h["value"]
         for h in raw_headers
         if h.get("name", "").lower() not in _STRIP_HEADERS
+        and not h.get("name", "").startswith(":")
     }
