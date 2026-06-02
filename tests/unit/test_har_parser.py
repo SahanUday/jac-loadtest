@@ -285,7 +285,7 @@ def _entry_with_resource_type(resource_type: str, url="http://h:8000/endpoint"):
 @pytest.mark.unit
 @pytest.mark.parametrize("resource_type", [
     "websocket", "eventsource", "document",
-    "stylesheet", "script", "manifest", "texttrack", "media",
+    "manifest", "texttrack", "media",
 ])
 def test_unsupported_resource_types_filtered(tmp_path, resource_type):
     """Entries with unsupported _resourceType must be skipped."""
@@ -297,6 +297,29 @@ def test_unsupported_resource_types_filtered(tmp_path, resource_type):
     entries = parse_har(path, target_url="http://t:9000")
     assert len(entries) == 1
     assert "/walker/me" in entries[0].url
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("resource_type,mime", [
+    ("stylesheet", "text/css"),
+    ("script",     "application/javascript"),
+])
+def test_static_resource_types_filtered_by_mime(tmp_path, resource_type, mime):
+    """stylesheet/script entries are filtered via MIME (not _resourceType) so --include-static can override."""
+    har = make_har(entries=[
+        _entry_with_resource_type(resource_type, url=f"http://h:8000/asset.{resource_type}"),
+        _entry(url="http://h:8000/walker/me"),
+    ])
+    # Override the response MIME to match the resource type
+    har["log"]["entries"][0]["response"]["content"]["mimeType"] = mime
+    path = _write_har(tmp_path, har)
+
+    entries_default = parse_har(path, target_url="http://t:9000")
+    assert len(entries_default) == 1, "MIME filter should drop static asset by default"
+    assert "/walker/me" in entries_default[0].url
+
+    entries_static = parse_har(path, target_url="http://t:9000", include_static=True)
+    assert len(entries_static) == 2, "--include-static should keep stylesheet/script entries"
 
 
 @pytest.mark.unit
