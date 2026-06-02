@@ -27,8 +27,6 @@ _SKIP_RESOURCE_TYPES = {
     "websocket",   # protocol upgrade — tool can't speak WS
     "eventsource", # streaming SSE — resp.read() blocks forever
     "document",    # page navigations
-    "stylesheet",  # covered by MIME filter too
-    "script",      # covered by MIME filter too
     "manifest",    # web app manifests
     "texttrack",   # subtitle/caption tracks
     "media",       # audio/video
