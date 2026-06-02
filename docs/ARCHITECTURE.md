@@ -140,6 +140,57 @@ application/x-www-form-urlencoded
 
 Use `--include-static` to disable filtering and replay everything.
 
+### Resource Type Filter (always active)
+
+HAR files recorded from deployed apps include browser resource types that the tool
+cannot correctly replay. These are filtered out unconditionally regardless of
+`--include-static`:
+
+| `_resourceType` | Reason skipped |
+|---|---|
+| `websocket` | Requires WebSocket protocol upgrade — tool only speaks HTTP |
+| `eventsource` | Server-Sent Events stream — `resp.read()` would block forever |
+| `document` | Full-page navigations, not API calls |
+| `stylesheet` | Covered by MIME filter too; belt-and-suspenders |
+| `script` | JS bundles; covered by MIME filter too |
+| `manifest` | Web app manifests |
+| `texttrack` | Subtitle/caption tracks |
+| `media` | Audio/video streams |
+
+Additionally, any entry whose URL begins with `ws://` or `wss://` is skipped even if
+`_resourceType` is absent or set to `other`.
+
+A single warning is printed to stderr the first time an unsupported type is encountered:
+
+```
+Warning: HAR contains WebSocket, SSE, or non-API entries (websocket, eventsource,
+document, etc.). These are skipped automatically.
+```
+
+### Cache-Busting URL Filter (always active)
+
+Analytics and telemetry endpoints (PostHog, Mixpanel, etc.) embed a Unix timestamp in
+the query string to prevent browser caching. When replayed, the stale timestamp causes
+the server to reject the request with 400.
+
+Entries are skipped when a query parameter whose name is in `{"_", "cb", "cachebust",
+"cache_bust", "nocache", "bust"}` has a value that is a 10–13 digit number (Unix
+timestamp in seconds or milliseconds):
+
+```
+/i/v0/e/?_=1779986528514   ← skipped  (13-digit ms timestamp)
+/api/data?_=hello          ← kept     (not a timestamp)
+/api/data?page=1           ← kept     (param name not a cache buster)
+```
+
+A single warning is printed to stderr the first time a cache-busting URL is encountered:
+
+```
+Warning: HAR contains URLs with cache-busting timestamp parameters
+(e.g. ?_=<timestamp>). These entries are skipped — the stale timestamp
+causes the server to reject the request.
+```
+
 ---
 
 ## Module Map
@@ -507,6 +558,22 @@ Cookie          managed by per-VU aiohttp cookie jar
 Host            set by aiohttp based on target URL
 Content-Length  recalculated by aiohttp from body
 ```
+
+Additionally, **HTTP/2 pseudo-headers** are stripped unconditionally. Chrome DevTools
+records HTTP/2 pseudo-headers (`:authority`, `:method`, `:path`, `:scheme`) as regular
+entries in the HAR `headers` array. These are protocol-level framing fields, not real
+HTTP headers — sending them as literal headers causes servers to return 400 Bad Request.
+Any header whose name begins with `:` is removed:
+
+```
+:authority  → stripped  (equivalent to Host, already stripped)
+:method     → stripped  (the HTTP method is taken from request.method instead)
+:path       → stripped  (the path is taken from the URL)
+:scheme     → stripped  (the scheme is taken from the target URL)
+```
+
+This is the reason HAR files from deployed HTTPS apps (which use HTTP/2) previously
+caused 400 errors on every request, while local HTTP/1.1 dev servers were unaffected.
 
 ### Think Time
 
