@@ -228,3 +228,194 @@ def test_malformed_har_missing_log(tmp_path):
     path = _write_har(tmp_path, har)
     with pytest.raises(ValueError, match="log"):
         parse_har(path, target_url="http://t:9000")
+
+
+# ---------------------------------------------------------------------------
+# HTTP/2 pseudo-header stripping
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_http2_pseudo_headers_stripped(tmp_path):
+    """Headers whose name starts with ':' must be removed (HTTP/2 pseudo-headers)."""
+    headers = [
+        {"name": ":authority", "value": "example.com"},
+        {"name": ":method",    "value": "POST"},
+        {"name": ":path",      "value": "/walker/me"},
+        {"name": ":scheme",    "value": "https"},
+        {"name": "Content-Type", "value": "application/json"},
+        {"name": "X-Custom",     "value": "keep-me"},
+    ]
+    har = make_har(entries=[_entry(headers=headers)])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    hdrs = entries[0].headers
+    assert ":authority" not in hdrs
+    assert ":method"    not in hdrs
+    assert ":path"      not in hdrs
+    assert ":scheme"    not in hdrs
+    assert hdrs.get("Content-Type") == "application/json"
+    assert hdrs.get("X-Custom") == "keep-me"
+
+
+@pytest.mark.unit
+def test_non_pseudo_headers_kept(tmp_path):
+    """Normal headers (no leading ':') must not be stripped by the pseudo-header rule."""
+    headers = [
+        {"name": "Accept",       "value": "application/json"},
+        {"name": "X-Request-ID", "value": "abc123"},
+    ]
+    har = make_har(entries=[_entry(headers=headers)])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    hdrs = entries[0].headers
+    assert hdrs.get("Accept") == "application/json"
+    assert hdrs.get("X-Request-ID") == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# Resource type filter
+# ---------------------------------------------------------------------------
+
+def _entry_with_resource_type(resource_type: str, url="http://h:8000/endpoint"):
+    entry = _entry(url=url)
+    entry["_resourceType"] = resource_type
+    return entry
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("resource_type", [
+    "websocket", "eventsource", "document",
+    "manifest", "texttrack", "media",
+])
+def test_unsupported_resource_types_filtered(tmp_path, resource_type):
+    """Entries with unsupported _resourceType must be skipped."""
+    har = make_har(entries=[
+        _entry_with_resource_type(resource_type),
+        _entry(url="http://h:8000/walker/me"),  # should survive
+    ])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    assert len(entries) == 1
+    assert "/walker/me" in entries[0].url
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("resource_type,mime", [
+    ("stylesheet", "text/css"),
+    ("script",     "application/javascript"),
+])
+def test_static_resource_types_filtered_by_mime(tmp_path, resource_type, mime):
+    """stylesheet/script entries are filtered via MIME (not _resourceType) so --include-static can override."""
+    har = make_har(entries=[
+        _entry_with_resource_type(resource_type, url=f"http://h:8000/asset.{resource_type}"),
+        _entry(url="http://h:8000/walker/me"),
+    ])
+    # Override the response MIME to match the resource type
+    har["log"]["entries"][0]["response"]["content"]["mimeType"] = mime
+    path = _write_har(tmp_path, har)
+
+    entries_default = parse_har(path, target_url="http://t:9000")
+    assert len(entries_default) == 1, "MIME filter should drop static asset by default"
+    assert "/walker/me" in entries_default[0].url
+
+    entries_static = parse_har(path, target_url="http://t:9000", include_static=True)
+    assert len(entries_static) == 2, "--include-static should keep stylesheet/script entries"
+
+
+@pytest.mark.unit
+def test_xhr_resource_type_kept(tmp_path):
+    """Entries with _resourceType 'xhr' or 'fetch' must not be filtered."""
+    har = make_har(entries=[
+        _entry_with_resource_type("xhr",   url="http://h:8000/walker/a"),
+        _entry_with_resource_type("fetch", url="http://h:8000/walker/b"),
+    ])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    assert len(entries) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("ws_url", [
+    "ws://h:8000/socket",
+    "wss://h:8000/socket",
+])
+def test_websocket_url_scheme_filtered(tmp_path, ws_url):
+    """Entries with ws:// or wss:// URLs must be skipped even without _resourceType."""
+    har = make_har(entries=[
+        _entry(url=ws_url),
+        _entry(url="http://h:8000/walker/me"),
+    ])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    assert len(entries) == 1
+    assert "/walker/me" in entries[0].url
+
+
+@pytest.mark.unit
+def test_unsupported_type_warning_emitted_once(tmp_path, capsys):
+    """Warning for unsupported resource types must appear exactly once."""
+    har = make_har(entries=[
+        _entry_with_resource_type("websocket", url="http://h:8000/ws1"),
+        _entry_with_resource_type("websocket", url="http://h:8000/ws2"),
+        _entry(url="http://h:8000/walker/me"),
+    ])
+    path = _write_har(tmp_path, har)
+    parse_har(path, target_url="http://t:9000")
+    captured = capsys.readouterr()
+    assert captured.err.count("WebSocket") == 1
+
+
+# ---------------------------------------------------------------------------
+# Cache-busting URL filter
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+@pytest.mark.parametrize("url", [
+    "http://h:8000/track?_=1779986528514",        # 13-digit ms timestamp
+    "http://h:8000/track?_=1609459200",           # 10-digit s timestamp
+    "http://h:8000/track?cb=1779986528514",
+    "http://h:8000/track?cachebust=1609459200",
+    "http://h:8000/track?nocache=1609459200000",
+    "http://h:8000/track?bust=1609459200",
+    "http://h:8000/track?ip=0&_=1779986528514&ver=1.3",  # mixed params
+])
+def test_cache_buster_urls_filtered(tmp_path, url):
+    """Entries with cache-busting timestamp query params must be skipped."""
+    har = make_har(entries=[
+        _entry(url=url),
+        _entry(url="http://h:8000/walker/me"),
+    ])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    assert len(entries) == 1
+    assert "/walker/me" in entries[0].url
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("url", [
+    "http://h:8000/api?_=hello",          # non-numeric value
+    "http://h:8000/api?page=1609459200",  # timestamp-like but param is 'page'
+    "http://h:8000/api?_=123",            # too short to be a timestamp (< 10 digits)
+    "http://h:8000/api?_=12345678901234", # too long (> 13 digits)
+    "http://h:8000/api/data",             # no query string at all
+])
+def test_non_cache_buster_urls_kept(tmp_path, url):
+    """Entries that look similar but are not cache busters must not be filtered."""
+    har = make_har(entries=[_entry(url=url)])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    assert len(entries) == 1
+
+
+@pytest.mark.unit
+def test_cache_buster_warning_emitted_once(tmp_path, capsys):
+    """Warning for cache-busting URLs must appear exactly once."""
+    har = make_har(entries=[
+        _entry(url="http://h:8000/track?_=1779986528514"),
+        _entry(url="http://h:8000/track?_=1779986530000"),
+        _entry(url="http://h:8000/walker/me"),
+    ])
+    path = _write_har(tmp_path, har)
+    parse_har(path, target_url="http://t:9000")
+    captured = capsys.readouterr()
+    assert captured.err.count("cache-busting") == 1
