@@ -81,21 +81,35 @@ mechanism jac-scale uses. Stage 2 moves the code into jac-scale; the command nam
 
 ---
 
-### Phase 3 — Microservice Mode
+### Phase 3 — Microservice Mode ✓
 > Route requests to the correct service process, report per-service breakdown.
 
-- [ ] `bridge/topology.py` — build prefix→URL routing table using jac-scale `ServiceRegistry`
-- [ ] Longest-prefix matching (mirrors jac-scale gateway routing algorithm)
-- [ ] `--mode microservice` flag
-- [ ] `--services-map '{"svc":"http://host:port"}'` explicit JSON override
-- [ ] Auto-discovery from `./jac.toml` `[plugins.scale.microservices.routes]` + `JAC_SV_*_URL` env vars when no `--services-map`
-- [ ] Per-service `RequestResult.service` field populated
-- [ ] Per-service metrics breakdown in console reporter
-- [ ] Per-service column in JSON report
-- [ ] `tests/unit/test_topology.py` — monolith routing, services-map JSON, longest-prefix, jac.toml discovery (with patched env vars), missing config error
-- [ ] `tests/fixtures/microservice.toml` — fixture jac.toml with `[plugins.scale.microservices.routes]`
+- [x] `bridge/topology.py` — `TopologyRouter` and `ServiceRoute` dataclass; longest-prefix routing that mirrors jac-scale `ServiceRegistry.match_route()` exactly
+- [x] Longest-prefix matching: `path == prefix OR path.startswith(prefix + "/")` — correctly rejects `/walker` matching `/walker-admin`
+- [x] `--mode microservice` flag
+- [x] `--services-map '{"svc":"http://host:port"}'` explicit JSON override; keys starting with `/` used as path prefixes directly (jacBuilder pattern)
+- [x] Auto-discovery from `./jac.toml` `[plugins.scale.microservices.routes]` + `JAC_SV_*_URL` env vars when no `--services-map`
+- [x] Fallback to `--url` (gateway) for unmatched paths; `service` label = `"gateway"`
+- [x] `core/har_parser.py` — `target_url` made optional; microservice mode keeps recorded URLs, topology handles routing
+- [x] Per-service `RequestResult.service` field populated from `topology.resolve()`
+- [x] Per-service "Service" column in console reporter (microservice mode only)
+- [x] `tests/unit/test_topology.py` — 20 unit tests: monolith routing, services-map JSON, longest-prefix wins, false-match prevention, jac.toml discovery, missing env var error, fallback, jacBuilder path-prefix key pattern
+- [x] `tests/integration/test_engine.py` — 2 microservice-mode tests: service label in metrics, routing to different server URLs verified with real in-process aiohttp servers
+- [x] `tests/fixtures/microservice.toml` — fixture jac.toml with `[plugins.scale.microservices.routes]`
 
-**Exit criterion:** `jac loadtest recording.har --mode microservice --services-map '{...}' --vus 10 --duration 30s` reports per-service latency and error rates. `pytest -m unit` passes.
+**Exit criterion:** `jac loadtest recording.har --mode microservice --services-map '{...}' --vus 10 --duration 30s` reports per-service latency and error rates. `pytest -m unit` passes. ✓
+
+**Notes from implementation:**
+- `_load_toml_routes()` is a module-level function (not a method) so tests can monkeypatch it without importing `jac_scale` — critical for unit test isolation
+- jacBuilder's `jac.toml` routes (`/api/builder_sv`) do NOT match HAR paths (`/walker/...`) — this is the "gateway abstraction" pattern; use `--services-map` with `/`-starting keys for that app
+- Microservice mode is only useful locally or inside a cluster; from outside production, monolith mode through the gateway is the correct choice
+- `--services-map` keys without leading `/` get `"/" + key` prepended as prefix; keys with leading `/` are used as-is; leading slash is stripped from the display name in the report
+
+**Bug fixes discovered during real-world verification (k8s_e2e fixture):**
+- **Prefix stripping in `resolve()`**: jac-scale gateway strips the route prefix before forwarding to the service (e.g. `/api/products/function/list` → `/function/list`). Without this, services return 405. The tool now replicates this stripping.
+- **`normalize_path()` returned full URL**: was returning `http://host/path` instead of `/path`. Fixed to strip origin so endpoint labels are consistent across both modes.
+- **Font files not filtered**: Chrome records font files with `_resourceType="font"` but `mimeType="application/octet-stream"`. Added `"font"` to `_SKIP_RESOURCE_TYPES` to catch them regardless of MIME.
+- **Engine crash on unrouted entries**: entries that slip through the filter with no matching topology route now warn once per path and skip, instead of crashing the entire test with a traceback.
 
 ---
 

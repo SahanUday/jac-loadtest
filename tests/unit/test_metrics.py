@@ -73,33 +73,33 @@ def test_percentile_empty():
 
 @pytest.mark.unit
 def test_normalize_path_integer():
-    assert normalize_path("http://host/walker/user/123") == "http://host/walker/user/{id}"
+    assert normalize_path("http://host/walker/user/123") == "/walker/user/{id}"
 
 
 @pytest.mark.unit
 def test_normalize_path_uuid_with_hyphens():
     uuid = "550e8400-e29b-41d4-a716-446655440000"
     result = normalize_path(f"http://host/walker/order/{uuid}")
-    assert result == "http://host/walker/order/{id}"
+    assert result == "/walker/order/{id}"
 
 
 @pytest.mark.unit
 def test_normalize_path_uuid_no_hyphens():
     uuid = "550e8400e29b41d4a716446655440000"
     result = normalize_path(f"http://host/walker/order/{uuid}")
-    assert result == "http://host/walker/order/{id}"
+    assert result == "/walker/order/{id}"
 
 
 @pytest.mark.unit
 def test_normalize_path_unchanged():
     result = normalize_path("http://host/walker/search")
-    assert result == "http://host/walker/search"
+    assert result == "/walker/search"
 
 
 @pytest.mark.unit
 def test_normalize_path_multiple_ids():
     result = normalize_path("http://host/a/123/b/456")
-    assert result == "http://host/a/{id}/b/{id}"
+    assert result == "/a/{id}/b/{id}"
 
 
 # ---------------------------------------------------------------------------

@@ -286,6 +286,7 @@ def _entry_with_resource_type(resource_type: str, url="http://h:8000/endpoint"):
 @pytest.mark.parametrize("resource_type", [
     "websocket", "eventsource", "document",
     "manifest", "texttrack", "media",
+    "font",  # Chrome records fonts with _resourceType='font'; MIME is often application/octet-stream
 ])
 def test_unsupported_resource_types_filtered(tmp_path, resource_type):
     """Entries with unsupported _resourceType must be skipped."""
@@ -320,6 +321,19 @@ def test_static_resource_types_filtered_by_mime(tmp_path, resource_type, mime):
 
     entries_static = parse_har(path, target_url="http://t:9000", include_static=True)
     assert len(entries_static) == 2, "--include-static should keep stylesheet/script entries"
+
+
+@pytest.mark.unit
+def test_font_with_octet_stream_mime_filtered(tmp_path):
+    """Font files recorded by Chrome have _resourceType='font' but MIME application/octet-stream.
+    They must be filtered even though MIME alone would not catch them."""
+    entry = _entry_with_resource_type("font", url="http://h:8000/inter-latin.woff2")
+    entry["response"]["content"]["mimeType"] = "application/octet-stream"
+    har = make_har(entries=[entry, _entry(url="http://h:8000/walker/me")])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    assert len(entries) == 1
+    assert "/walker/me" in entries[0].url
 
 
 @pytest.mark.unit

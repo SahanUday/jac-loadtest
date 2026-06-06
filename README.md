@@ -4,6 +4,25 @@ HAR-based load testing CLI for [jac-scale](https://github.com/jaseci-labs/jaseci
 
 The tool registers itself as a `jac` subcommand, so after installation you run `jac loadtest` alongside `jac start`, `jac deploy`, and the rest of the jac ecosystem.
 
+## Testing Modes
+
+**Monolith mode** (default) — all requests go through a single `--url`. Use this for production-realistic load testing: it measures what users actually experience end-to-end through the gateway.
+
+**Microservice mode** — route requests directly to individual service processes by URL path prefix. Use this locally or inside your cluster to isolate per-service latency and identify which service is the bottleneck — without gateway overhead masking the signal.
+
+```bash
+# Monolith: all traffic through the gateway (default, production-realistic)
+jac loadtest recording.har --url http://localhost:8000 --vus 10 --duration 30s
+
+# Microservice: bypass gateway, route by path prefix to individual services
+jac loadtest recording.har --mode microservice \
+  --url http://localhost:8000 \
+  --services-map '{"order_service":"http://localhost:18001","inventory_service":"http://localhost:18002"}' \
+  --vus 10 --duration 30s
+```
+
+> **Note:** Microservice mode requires direct network access to service ports. This means it's only usable locally (`jac serve`) or from inside a Kubernetes cluster — not from outside production. For remote or production load testing, use monolith mode.
+
 ## Quick Start
 
 ```bash
