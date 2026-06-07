@@ -63,17 +63,21 @@ class TopologyRouter:
                     service_path = path[len(route.prefix):] or "/"
                 else:
                     service_path = path
+                base_path = t.path.rstrip("/") if t.path else ""
+                routed_path = f"{base_path}{service_path}" if base_path else service_path
                 routed = urlunparse((
                     t.scheme, t.netloc,
-                    service_path, parsed.params, parsed.query, "",
+                    routed_path, parsed.params, parsed.query, "",
                 ))
                 return routed, route.name
 
         if self._fallback_url:
             t = urlparse(self._fallback_url)
+            base_path = t.path.rstrip("/") if t.path else ""
+            routed_path = f"{base_path}{path}" if base_path else path
             routed = urlunparse((
                 t.scheme, t.netloc,
-                path, parsed.params, parsed.query, "",
+                routed_path, parsed.params, parsed.query, "",
             ))
             return routed, "gateway"
 

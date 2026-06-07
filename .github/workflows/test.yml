@@ -39,10 +39,6 @@ jobs:
       - name: Run unit tests
         run: pytest -m unit -v
 
-  ---------------------------------------------------------------------------
-  Phase 2 — Auth + Think Time
-  Uncomment and fill in when tests/integration/test_auth.py is written.
-  ---------------------------------------------------------------------------
   test-integration:
     name: Integration tests
     runs-on: ubuntu-latest
