@@ -96,7 +96,7 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_du
             breakdown_str = "  ".join(
                 f"{key}: {count}" for key, count in sorted(s.error_breakdown.items())
             )
-            label = f"{s.service}/{s.endpoint}" if is_microservice else s.endpoint
+            label = (f"{s.service}{s.endpoint}" if s.endpoint.startswith("/") else f"{s.service}/{s.endpoint}") if is_microservice else s.endpoint
             console.print(f"  {label}  →  {breakdown_str}")
         console.print("")
 
