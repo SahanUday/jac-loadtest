@@ -19,18 +19,20 @@ def run(args: object) -> None:
 
     config = from_args(args)
 
-    if not config.url:
-        print("Error: --url is required", file=sys.stderr)
+    # --url required for monolith mode; optional for microservice (becomes fallback)
+    if config.mode == "monolith" and not config.url:
+        print("Error: --url is required for monolith mode", file=sys.stderr)
         sys.exit(2)
 
     if not config.har_file:
         print("Error: har_file positional argument is required", file=sys.stderr)
         sys.exit(2)
 
+    # Parse HAR — monolith rewrites all URLs to config.url; microservice keeps originals
     try:
         entries = parse_har(
             config.har_file,
-            target_url=config.url,
+            target_url=config.url if config.mode == "monolith" else None,
             include_static=config.include_static,
             login_path=config.login_path,
         )
@@ -49,11 +51,32 @@ def run(args: object) -> None:
     from jac_loadtest.bridge.auth import AuthProvider, AuthenticationError
 
     auth_provider = AuthProvider.from_config(config)
+
+    # In microservice mode, auth still goes to the gateway (--url); require it when set
+    if config.mode == "microservice" and auth_provider is not None and not config.url:
+        print(
+            "Error: --url (gateway URL) is required when using authentication "
+            "in microservice mode",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    # Build topology router — validates service map JSON and service URL availability
+    from jac_loadtest.bridge.topology import TopologyRouter
+
+    try:
+        topology = TopologyRouter.from_config(config)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
+
     metrics = MetricsCollector(max_samples=config.max_samples)
     t_start = time.time()
 
     try:
-        asyncio.run(run_all_vus(entries, config, metrics, auth_provider=auth_provider))
+        asyncio.run(
+            run_all_vus(entries, config, metrics, topology=topology, auth_provider=auth_provider)
+        )
     except AuthenticationError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(2)

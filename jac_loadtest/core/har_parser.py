@@ -30,6 +30,7 @@ _SKIP_RESOURCE_TYPES = {
     "manifest",    # web app manifests
     "texttrack",   # subtitle/caption tracks
     "media",       # audio/video
+    "font",        # fonts — Chrome sets _resourceType="font" but MIME is often application/octet-stream, not font/*
 }
 
 # Query-param names used exclusively as cache busters.
@@ -93,11 +94,16 @@ def _has_cache_buster(url: str) -> bool:
 
 def parse_har(
     har_path: str,
-    target_url: str,
+    target_url: str | None = None,
     include_static: bool = False,
     login_path: str = "/user/login",
 ) -> list[HarEntry]:
-    """Parse a HAR 1.2 file and return filtered, URL-rewritten HarEntry objects."""
+    """Parse a HAR 1.2 file and return filtered, URL-rewritten HarEntry objects.
+
+    target_url: when provided, rewrites all entry origins to this URL (monolith mode).
+                when None, keeps original recorded URLs — the TopologyRouter handles
+                per-request routing at send time (microservice mode without gateway URL).
+    """
     with open(har_path, encoding="utf-8") as f:
         data = json.load(f)
 
@@ -153,7 +159,10 @@ def parse_har(
         if not include_static and _is_static(mime):
             continue
 
-        rewritten_url = _rewrite_url(original_url, recorded_origin, target_url)
+        if target_url is not None:
+            rewritten_url = _rewrite_url(original_url, recorded_origin, target_url)
+        else:
+            rewritten_url = original_url  # keep recorded URL; topology handles routing
 
         headers = _sanitize_headers(req.get("headers", []))
 

@@ -21,7 +21,11 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_du
 
     console = Console(stderr=True, highlight=False)
 
+    is_microservice = config.mode == "microservice"
+
     table = Table(box=box.SIMPLE_HEAVY, show_footer=False)
+    if is_microservice:
+        table.add_column("Service", style="green", no_wrap=True, max_width=30)
     table.add_column("Endpoint", style="cyan", no_wrap=True, max_width=60)
     table.add_column("Reqs", justify="right")
     table.add_column("OK%", justify="right")
@@ -32,7 +36,10 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_du
     table.add_column("Errs", justify="right")
 
     for s in stats:
-        table.add_row(
+        row: list[str] = []
+        if is_microservice:
+            row.append(s.service)
+        row.extend([
             s.endpoint,
             str(s.total_requests),
             f"{s.success_rate_pct:.1f}",
@@ -41,7 +48,8 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_du
             f"{s.p99_ms:.0f}ms",
             f"{s.rps:.1f}",
             str(s.error_count),
-        )
+        ])
+        table.add_row(*row)
 
     # TOTAL footer row aggregated across all endpoints
     if stats:
@@ -63,7 +71,10 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_du
         total_rps = sum(s.rps for s in stats)
 
         table.add_section()
-        table.add_row(
+        total_row: list[str] = []
+        if is_microservice:
+            total_row.append("[bold]-[/bold]")
+        total_row.extend([
             "[bold]TOTAL[/bold]",
             f"[bold]{total_reqs}[/bold]",
             f"[bold]{overall_ok_pct:.1f}[/bold]",
@@ -72,7 +83,8 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_du
             f"[bold]{all_p99:.0f}ms[/bold]",
             f"[bold]{total_rps:.1f}[/bold]",
             f"[bold]{total_errors}[/bold]",
-        )
+        ])
+        table.add_row(*total_row)
 
     console.print(table)
 
@@ -84,7 +96,8 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_du
             breakdown_str = "  ".join(
                 f"{key}: {count}" for key, count in sorted(s.error_breakdown.items())
             )
-            console.print(f"  {s.endpoint}  →  {breakdown_str}")
+            label = (f"{s.service}{s.endpoint}" if s.endpoint.startswith("/") else f"{s.service}/{s.endpoint}") if is_microservice else s.endpoint
+            console.print(f"  {label}  →  {breakdown_str}")
         console.print("")
 
     display_duration = actual_duration_s if actual_duration_s is not None else parse_duration(config.duration)

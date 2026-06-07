@@ -1,0 +1,6 @@
+[plugins.scale.microservices]
+enabled = true
+
+[plugins.scale.microservices.routes]
+order_service = "/walker/order"
+inventory_service = "/walker/inventory"

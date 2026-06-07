@@ -33,7 +33,7 @@
 
 **`jac loadtest` from day one.** The standalone `jac-loadtest` PyPI package registers itself as a `jac` subcommand via `[project.entry-points."jac"]` — the same mechanism jac-scale uses. Installing `jac-loadtest` immediately makes `jac loadtest` available alongside `jac start`, `jac deploy`, etc. There is no separate `jac-loadtest` binary to learn. When the tool matures, the plan is to absorb it as `pip install jac-scale[loadtest]` — the code moves into jac-scale's `plugin.jac`, and the command name stays exactly the same. The architecture is designed so that migration is a file move, not a rewrite.
 
-**Two deployment topologies.** jac-scale apps run in two modes: a single-process monolith (`jac start`) or a gateway-plus-services microservice cluster. The tool supports both.
+**Two testing modes.** Use **monolith mode** (`--mode monolith`, the default) to test end-to-end through the gateway — the right choice for production-realistic load testing that measures what users actually experience. Use **microservice mode** (`--mode microservice`) to route requests directly to individual service processes by path prefix, bypassing the gateway — useful locally or inside a cluster to isolate per-service latency and identify which service is the bottleneck. Microservice mode requires direct network access to service ports and is not usable against remote production deployments.
 
 ---
 
@@ -151,6 +151,7 @@ cannot correctly replay. These are filtered out unconditionally regardless of
 | `websocket` | Requires WebSocket protocol upgrade — tool only speaks HTTP |
 | `eventsource` | Server-Sent Events stream — `resp.read()` would block forever |
 | `document` | Full-page navigations, not API calls |
+| `font` | Font files — Chrome sets `_resourceType="font"` but MIME is often `application/octet-stream` (not `font/*`), so the MIME filter alone misses them |
 | `stylesheet` | Covered by MIME filter too; belt-and-suspenders |
 | `script` | JS bundles; covered by MIME filter too |
 | `manifest` | Web app manifests |
@@ -864,18 +865,22 @@ The topology module reads these env vars to build the routing table:
 }
 ```
 
-#### Longest-Prefix Routing
+#### Longest-Prefix Routing and Prefix Stripping
 
-This mirrors jac-scale's `ServiceRegistry.match_route()` algorithm exactly. Given a request path, prefixes are sorted by length descending — the longest matching prefix wins:
+This mirrors jac-scale's `ServiceRegistry.match_route()` algorithm exactly. Given a request path, prefixes are sorted by length descending — the longest matching prefix wins. Once a match is found, the prefix is **stripped** from the path before the request is sent to the service — exactly as the jac-scale gateway strips it when forwarding:
 
 ```mermaid
 flowchart LR
-    A["Request path:\n/walker/order/create"] --> B["Sort prefixes by length DESC"]
-    B --> C["/walker/order\n/walker/inventory\n/walker\n/user"]
+    A["HAR path:\n/api/products/function/list"] --> B["Sort prefixes by length DESC"]
+    B --> C["/api/products\n/api/orders\n/api/cart"]
     C --> D{"Does path start\nwith this prefix?"}
-    D -->|yes| E["Route to\nhttp://localhost:18001"]
+    D -->|yes| E["Strip prefix →\n/function/list\nSend to http://localhost:18643/function/list"]
     D -->|no, try next| D
 ```
+
+Prefix stripping is essential: the individual service only knows about paths **after** the gateway prefix (e.g. `/function/list_products`), not the full gateway path (`/api/products/function/list_products`). Without stripping, the service returns 405 Method Not Allowed because the path does not match any of its routes.
+
+The `endpoint` label stored in metrics always uses the **original HAR path** (before stripping), so the report shows the user-facing URL the browser recorded — not the internal service path.
 
 #### Service URL Resolution
 
@@ -970,13 +975,18 @@ or network error type names (`"TIMEOUT"`, `"CONNECTION_REFUSED"`).
 ### Endpoint Normalization
 
 `normalize_path()` in `core/metrics.py` is applied to every URL before storing
-the `endpoint` field. UUID and integer path segments are replaced with `{id}`:
+the `endpoint` field. It strips the scheme and host, returning the path only, and
+replaces UUID and integer path segments with `{id}`:
 
 ```
-/walker/user/123         → /walker/user/{id}
-/walker/order/abc-def-0  → /walker/order/{id}
-/walker/search           → /walker/search        (unchanged)
+http://localhost:8000/walker/user/123        → /walker/user/{id}
+http://recorded:8000/walker/order/abc-def-0  → /walker/order/{id}
+http://svc:18001/walker/search               → /walker/search        (unchanged)
 ```
+
+Stripping the origin ensures the endpoint label is consistent between monolith mode
+(where `entry.url` is rewritten to the target URL) and microservice mode (where
+`entry.url` retains the original recorded URL with a different host).
 
 Detection rules:
 - Pure integer segment: `^\d+$`

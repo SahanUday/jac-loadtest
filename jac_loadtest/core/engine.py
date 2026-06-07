@@ -55,6 +55,7 @@ async def run_all_vus(
                 stop_requested=stop_requested,
                 loop=loop,
                 auth_provider=auth_provider,
+                topology=topology,
             )
         )
         for i in range(config.vus)
@@ -75,6 +76,7 @@ async def _run_vu(
     stop_requested: asyncio.Event,
     loop: asyncio.AbstractEventLoop,
     auth_provider: object | None = None,
+    topology: object | None = None,
 ) -> None:
     """Single virtual user: wait ramp delay, authenticate, then replay HAR entries."""
     if delay > 0:
@@ -84,6 +86,8 @@ async def _run_vu(
     duration_seconds = parse_duration(config.duration)
     t_start = loop.time()
     iteration = 0
+    # Warn once per unrouted path within this VU to avoid spam across iterations.
+    _warned_unrouted: set[str] = set()
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         # Authenticate once before entering the request loop.
@@ -110,7 +114,21 @@ async def _run_vu(
                     config=config,
                     loop=loop,
                     token=token,
+                    topology=topology,
                 )
+                if result is None:
+                    # topology.resolve() found no route (e.g. /static/* fetch entries
+                    # that look like API calls but have no matching service prefix).
+                    from urllib.parse import urlparse as _up
+                    path = _up(entry.url).path
+                    if path not in _warned_unrouted:
+                        print(
+                            f"Warning: no route for '{path}' — skipping. "
+                            "Add a matching prefix to --services-map or set --url as fallback.",
+                            file=sys.stderr,
+                        )
+                        _warned_unrouted.add(path)
+                    continue
                 metrics.record(result)
                 if config.think_time == "real" and entry.think_time_ms > 0:
                     await asyncio.sleep(
@@ -127,17 +145,31 @@ async def _send_request(
     config: LoadTestConfig,
     loop: asyncio.AbstractEventLoop,
     token: str | None = None,
-) -> RequestResult:
-    """Send one HTTP request and return a RequestResult."""
+    topology: object | None = None,
+) -> RequestResult | None:
+    """Send one HTTP request and return a RequestResult, or None if no route exists."""
     headers = dict(entry.headers)
     if token:
         headers["Authorization"] = f"Bearer {token}"
+
+    # Resolve the final request URL and service label via topology.
+    # topology=None means monolith mode: use entry.url as-is, label "monolith".
+    if topology is not None:
+        try:
+            request_url, service_name = topology.resolve(entry.url)
+        except ValueError:
+            return None  # caller warns and skips
+    else:
+        request_url, service_name = entry.url, "monolith"
+
+    # Endpoint identifier for metrics uses the original entry URL (path only, normalized).
+    endpoint = normalize_path(entry.url)
     t0 = loop.time()
 
     try:
         async with session.request(
             method=entry.method,
-            url=entry.url,
+            url=request_url,
             headers=headers,
             data=entry.body,
             allow_redirects=False,
@@ -145,8 +177,8 @@ async def _send_request(
             body = await resp.read()
             latency_ms = (loop.time() - t0) * 1000
             return RequestResult(
-                endpoint=normalize_path(entry.url),
-                service="monolith",
+                endpoint=endpoint,
+                service=service_name,
                 status=resp.status,
                 latency_ms=latency_ms,
                 bytes_received=len(body),
@@ -157,8 +189,8 @@ async def _send_request(
 
     except asyncio.TimeoutError:
         return RequestResult(
-            endpoint=normalize_path(entry.url),
-            service="monolith",
+            endpoint=endpoint,
+            service=service_name,
             status=0,
             latency_ms=parse_duration(config.timeout) * 1000,
             bytes_received=0,
@@ -169,8 +201,8 @@ async def _send_request(
 
     except aiohttp.ClientConnectorError:
         return RequestResult(
-            endpoint=normalize_path(entry.url),
-            service="monolith",
+            endpoint=endpoint,
+            service=service_name,
             status=0,
             latency_ms=0.0,
             bytes_received=0,

@@ -181,25 +181,96 @@ pytest -m integration -v
 
 ## Phase 3 — Microservice Mode
 
-> Fill in after Phase 3 is implemented.
-
 ### Automated
 
 ```bash
 pytest -m unit -v
+pytest -m integration -v
 ```
 
-- [ ] All unit tests pass (including `tests/unit/test_topology.py`)
+- [x] All unit tests pass (including `tests/unit/test_topology.py`) — 89 unit tests total
+- [x] All integration tests pass (including `tests/integration/test_engine.py` topology tests) — 14 integration tests total
+- [x] Total: 103 tests passing across unit + integration suites
 
 ### Manual
 
-- [ ] `jac loadtest <har> --mode microservice --services-map '{"walker":"http://host:8001","user":"http://host:8002"}' --vus 5 --duration 15s`
-  - Table shows separate rows per service
-  - Each row shows the correct service name
+> **Routing verification without a real jac-scale app**
+> Use `scripts/mock_service.py` to spin up two minimal HTTP servers that log every
+> request they receive. This lets you confirm routing is correct without needing jac-scale running.
+>
+> ```bash
+> # Terminal 1 — handles /walker/* requests
+> python scripts/mock_service.py builder_sv 18001
+>
+> # Terminal 2 — handles /user/* requests
+> python scripts/mock_service.py gateway 18002
+>
+> # Terminal 3 — run the load test
+> jac loadtest <har> --mode microservice \
+>   --services-map '{"/walker":"http://localhost:18001","/user":"http://localhost:18002"}' \
+>   --vus 1 --iterations 1
+> ```
+>
+> Check that `/walker/*` paths appear only in Terminal 1 and `/user/*` paths only in Terminal 2.
+> The mock verifies routing only — not auth or actual jac walker behaviour.
 
-- [ ] Run with `--mode microservice` and no `--services-map` and no `jac.toml`
-  - Clear error about missing service configuration
+**`--services-map` mode**
+
+- [x] `jac loadtest <har> --mode microservice --services-map '{"/api/products":"http://localhost:18643","/api/orders":"http://localhost:18882","/api/cart":"http://localhost:18397"}' --vus 5 --duration 30s`
+  - Table shows a "Service" column (first column, before Endpoint)
+  - Separate rows appear per service; service names match keys without leading slash (`api/products`, not `/api/products`)
+  - Endpoint column shows original HAR path (`/api/products/function/list_products`), not the internal service path
+  - Footer shows `Mode: microservice`
+  - Verified against k8s_e2e fixture — 100% OK, real latency breakdown visible
+
+- [ ] Same command with two walker paths routed to the same service
+  - Both path rows show the same service name in the Service column
+
+**jacBuilder pattern (path-prefix keys starting with `/`)**
+
+- [ ] `jac loadtest <har> --mode microservice --url https://gateway:8000 --services-map '{"/walker/ai_chat":"http://jac-coder:18002","/walker":"http://builder:18001"}' --vus 5 --duration 15s`
+  - `/walker/ai_chat` requests route to `jac-coder:18002` (longest prefix wins)
+  - Other `/walker/...` requests route to `builder:18001`
+  - `/user/login` falls through to gateway (`--url`) — service label `gateway`
+
+**jac.toml auto-discovery**
+
+- [x] Run from k8s_e2e fixture directory with `JAC_SV_*_URL` env vars set:
+  - `jac loadtest <har> --mode microservice --url http://localhost:8000 --vus 5 --duration 30s`
+  - Routes discovered from `jac.toml`; service names and latency breakdown match per-service reality
+  - Note: env vars must be set in the same terminal as the load test (jac-scale sets them in its own process)
+
+**Error paths (exit code 2)**
+
+- [ ] `--mode microservice` with no `--services-map` and no `jac.toml`
+  - Error message mentions both `--services-map` and `jac.toml`
   - Exits with code 2
+
+- [ ] `--mode microservice` with jac.toml routes but missing `JAC_SV_*_URL` env vars
+  - Error message lists the specific missing env var name(s)
+  - Exits with code 2
+
+- [ ] `--mode microservice --username u --password p` without `--url`
+  - Error mentions `--url` required for authentication gateway
+  - Exits with code 2
+
+- [ ] `--mode microservice --services-map '{not json}'`
+  - Error mentions invalid JSON
+  - Exits with code 2
+
+**Monolith mode unchanged**
+
+- [ ] `--mode monolith --url http://localhost:8000` (or default, no `--mode`)
+  - No "Service" column in output table
+  - `--url` still required; missing `--url` → error, exit 2
+  - Footer shows `Mode: monolith`
+
+**Auth in microservice mode**
+
+- [ ] `jac loadtest <har> --mode microservice --services-map '...' --url http://gateway:8000 --username u --password p --vus 5 --duration 15s`
+  - Auth request (`POST /user/login`) goes to gateway (`--url`)
+  - Subsequent walker requests go to individual services
+  - No 401 errors in report (assuming valid credentials)
 
 ---
 

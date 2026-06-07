@@ -62,9 +62,13 @@ def percentile(latencies: list[float], p: float) -> float:
 
 
 def normalize_path(url: str) -> str:
-    """Replace UUID and integer path segments with {id}, preserving full URL."""
+    """Extract path from URL and replace UUID/integer segments with {id}.
+
+    Strips scheme and host so the endpoint label is consistent regardless of
+    whether the URL was rewritten (monolith) or kept as recorded (microservice).
+    """
     import re
-    from urllib.parse import urlparse, urlunparse
+    from urllib.parse import urlparse
     parsed = urlparse(url)
     segments = parsed.path.split("/")
     normalized = []
@@ -75,8 +79,7 @@ def normalize_path(url: str) -> str:
             normalized.append("{id}")
         else:
             normalized.append(seg)
-    normalized_path = "/".join(normalized)
-    return urlunparse((parsed.scheme, parsed.netloc, normalized_path, parsed.params, parsed.query, ""))
+    return "/".join(normalized)
 
 
 class MetricsCollector:
