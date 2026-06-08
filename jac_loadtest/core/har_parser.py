@@ -81,6 +81,22 @@ def _is_unsupported_type(entry: dict) -> bool:
     return url.startswith(("ws://", "wss://"))
 
 
+def _has_missing_body(method: str, raw_headers: list[dict], post_data: dict | None) -> bool:
+    """Return True if a request should have a body but none was captured in the HAR."""
+    if method.upper() not in ("POST", "PUT", "PATCH"):
+        return False
+    content_length = next(
+        (h["value"] for h in raw_headers if h.get("name", "").lower() == "content-length"),
+        "0",
+    )
+    try:
+        has_content = int(content_length) > 0
+    except ValueError:
+        has_content = False
+    body_text = (post_data or {}).get("text")
+    return has_content and not body_text
+
+
 def _has_cache_buster(url: str) -> bool:
     """Return True if the URL contains a stale cache-busting timestamp parameter."""
     qs = parse_qs(urlparse(url).query)
@@ -125,6 +141,7 @@ def parse_har(
     result: list[HarEntry] = []
     warned_unsupported = False
     warned_cache_buster = False
+    warned_missing_body = False
 
     for entry in raw_entries:
         req = entry["request"]
@@ -135,9 +152,9 @@ def parse_har(
         if _is_unsupported_type(entry):
             if not warned_unsupported:
                 print(
-                    "Warning: HAR contains WebSocket, SSE, or non-API entries "
+                    "\n\033[33mWarning: HAR contains WebSocket, SSE, or non-API entries "
                     "(websocket, eventsource, document, etc.). "
-                    "These are skipped automatically.",
+                    "These are skipped automatically.\033[0m",
                     file=sys.stderr,
                 )
                 warned_unsupported = True
@@ -148,9 +165,9 @@ def parse_har(
         if _has_cache_buster(original_url):
             if not warned_cache_buster:
                 print(
-                    "Warning: HAR contains URLs with cache-busting timestamp "
+                    "\n\033[33mWarning: HAR contains URLs with cache-busting timestamp "
                     "parameters (e.g. ?_=<timestamp>). These entries are skipped — "
-                    "the stale timestamp causes the server to reject the request.",
+                    "the stale timestamp causes the server to reject the request.\033[0m",
                     file=sys.stderr,
                 )
                 warned_cache_buster = True
@@ -164,7 +181,21 @@ def parse_har(
         else:
             rewritten_url = original_url  # keep recorded URL; topology handles routing
 
-        headers = _sanitize_headers(req.get("headers", []))
+        raw_headers = req.get("headers", [])
+
+        if _has_missing_body(req["method"], raw_headers, req.get("postData")):
+            if not warned_missing_body:
+                print(
+                    "\n\033[33mWarning: HAR contains POST/PUT/PATCH entries where the request body "
+                    "was not captured (postData missing despite non-zero Content-Length). "
+                    "These entries are skipped — replaying them without a body would cause "
+                    "422 errors. Re-record the HAR to capture the full request body.\033[0m",
+                    file=sys.stderr,
+                )
+                warned_missing_body = True
+            continue
+
+        headers = _sanitize_headers(raw_headers)
 
         post_data = req.get("postData", {}) or {}
         body = post_data.get("text") or None
@@ -198,10 +229,10 @@ def _check_version(version: str) -> None:
     """Warn if the HAR version is outside the tested range."""
     if version not in _SUPPORTED_HAR_VERSIONS:
         print(
-            f"Warning: HAR version '{version}' is not tested with this tool "
+            f"\n\033[33mWarning: HAR version '{version}' is not tested with this tool "
             f"(tested: {', '.join(sorted(_SUPPORTED_HAR_VERSIONS))}).\n"
             "Parsing will continue but results may be incomplete or incorrect.\n"
-            "If the output looks wrong, check for a jac-loadtest update.",
+            "If the output looks wrong, check for a jac-loadtest update.\033[0m",
             file=sys.stderr,
         )
 
@@ -214,10 +245,10 @@ def _security_scan(entries: list[dict]) -> None:
             value = hdr.get("value", "")
             if name in ("authorization", "cookie") and value:
                 print(
-                    "Warning: HAR file contains Authorization/Cookie headers from the "
+                    "\n\033[33mWarning: HAR file contains Authorization/Cookie headers from the "
                     "recording session.\nThese headers are stripped before replay, but "
                     "the file itself contains sensitive data.\n"
-                    "Do not commit this HAR file to version control.",
+                    "Do not commit this HAR file to version control.\033[0m",
                     file=sys.stderr,
                 )
                 return

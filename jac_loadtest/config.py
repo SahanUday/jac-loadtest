@@ -5,12 +5,13 @@ Phase 2 will add jac.toml reading via jac_scale.config_loader.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from typing import Any
 
 
 BUILT_IN_DEFAULTS: dict = {
     "vus": 1,
     "duration": "30s",
-    "iterations": None,
+    "iterations": 1,
     "ramp_up": "0s",
     "timeout": "30s",
     "mode": "monolith",
@@ -36,7 +37,7 @@ class LoadTestConfig:
     # Load shape
     vus: int = 1
     duration: str = "30s"
-    iterations: int | None = None
+    iterations: int  = 1
     ramp_up: str = "0s"
     timeout: str = "30s"
 
@@ -107,7 +108,7 @@ def from_args(args: object) -> LoadTestConfig:
 
     # For toml-sourced fields, use CLI value if provided (not None), else toml value,
     # else built-in default.
-    def resolve(name: str) -> object:
+    def resolve(name: str) -> Any:
         cli_val = getattr(args, name, None)
         if cli_val is not None:
             return cli_val
