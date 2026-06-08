@@ -49,6 +49,8 @@ class HarEntry:
     think_time_ms: float
     is_login: bool
     original_url: str
+    occurrence: int = 0
+    total_occurrences: int = 0
 
 
 def _origin(url: str) -> str:
@@ -218,6 +220,19 @@ def parse_har(
                 original_url=original_url,
             )
         )
+
+    # Count how many times each path appears so occurrence numbers can be assigned.
+    totals: dict[str, int] = {}
+    for entry in result:
+        path = urlparse(entry.url).path
+        totals[path] = totals.get(path, 0) + 1
+
+    seen: dict[str, int] = {}
+    for entry in result:
+        path = urlparse(entry.url).path
+        seen[path] = seen.get(path, 0) + 1
+        entry.occurrence = seen[path]
+        entry.total_occurrences = totals[path]
 
     return result
 

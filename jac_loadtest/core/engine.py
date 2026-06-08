@@ -189,6 +189,8 @@ async def _send_request(
                 timestamp=t0,
                 vu_id=vu_id,
                 error_type=None,
+                occurrence=entry.occurrence,
+                total_occurrences=entry.total_occurrences,
             )
 
     except asyncio.TimeoutError:
@@ -201,6 +203,8 @@ async def _send_request(
             timestamp=t0,
             vu_id=vu_id,
             error_type="TIMEOUT",
+            occurrence=entry.occurrence,
+            total_occurrences=entry.total_occurrences,
         )
 
     except aiohttp.ClientConnectorError:
@@ -213,4 +217,6 @@ async def _send_request(
             timestamp=t0,
             vu_id=vu_id,
             error_type="CONNECTION_REFUSED",
+            occurrence=entry.occurrence,
+            total_occurrences=entry.total_occurrences,
         )

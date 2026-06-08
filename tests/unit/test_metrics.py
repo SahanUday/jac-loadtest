@@ -181,3 +181,80 @@ def test_error_type_http_vs_network():
     assert "CONNECTION_REFUSED" in breakdown
     assert breakdown["404"] == 1
     assert breakdown["CONNECTION_REFUSED"] == 1
+
+
+# ---------------------------------------------------------------------------
+# error_breakdown — occurrence labelling
+# ---------------------------------------------------------------------------
+
+def _result_with_occurrence(
+    status: int = 422,
+    error_type: str | None = None,
+    occurrence: int = 1,
+    total_occurrences: int = 1,
+) -> RequestResult:
+    return RequestResult(
+        endpoint="/walker/ai_chat",
+        service="monolith",
+        status=status,
+        latency_ms=50.0,
+        bytes_received=100,
+        timestamp=0.0,
+        vu_id=0,
+        error_type=error_type,
+        occurrence=occurrence,
+        total_occurrences=total_occurrences,
+    )
+
+
+@pytest.mark.unit
+def test_error_breakdown_no_occurrence_label_when_single():
+    """When total_occurrences=1 the breakdown key is just the status code, no call label."""
+    collector = MetricsCollector()
+    collector.record(_result_with_occurrence(status=500, occurrence=1, total_occurrences=1))
+    stats = collector.compute_endpoint_stats(duration_seconds=1.0)
+    assert stats[0].error_breakdown == {"500": 1}
+
+
+@pytest.mark.unit
+def test_error_breakdown_occurrence_label_when_repeated():
+    """When total_occurrences>1 the breakdown key includes '(call #N of M)'."""
+    collector = MetricsCollector()
+    collector.record(_result_with_occurrence(status=422, occurrence=3, total_occurrences=4))
+    stats = collector.compute_endpoint_stats(duration_seconds=1.0)
+    assert stats[0].error_breakdown == {"422 (call #3 of 4)": 1}
+
+
+@pytest.mark.unit
+def test_error_breakdown_occurrence_aggregates_across_vus():
+    """The same failing occurrence across multiple VUs/iterations aggregates its count."""
+    collector = MetricsCollector()
+    for _ in range(5):
+        collector.record(_result_with_occurrence(status=422, occurrence=3, total_occurrences=4))
+    stats = collector.compute_endpoint_stats(duration_seconds=1.0)
+    assert stats[0].error_breakdown == {"422 (call #3 of 4)": 5}
+
+
+@pytest.mark.unit
+def test_error_breakdown_different_occurrences_listed_separately():
+    """Different failing occurrences of the same endpoint produce separate keys."""
+    collector = MetricsCollector()
+    collector.record(_result_with_occurrence(status=422, occurrence=2, total_occurrences=4))
+    collector.record(_result_with_occurrence(status=500, occurrence=4, total_occurrences=4))
+    stats = collector.compute_endpoint_stats(duration_seconds=1.0)
+    breakdown = stats[0].error_breakdown
+    assert breakdown == {
+        "422 (call #2 of 4)": 1,
+        "500 (call #4 of 4)": 1,
+    }
+
+
+@pytest.mark.unit
+def test_error_breakdown_network_error_with_occurrence():
+    """Network error types also get the occurrence label when total_occurrences>1."""
+    collector = MetricsCollector()
+    collector.record(_result_with_occurrence(
+        status=0, error_type="TIMEOUT", occurrence=2, total_occurrences=3
+    ))
+    stats = collector.compute_endpoint_stats(duration_seconds=1.0)
+    assert stats[0].error_breakdown == {"TIMEOUT (call #2 of 3)": 1}

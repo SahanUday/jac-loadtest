@@ -23,6 +23,8 @@ class RequestResult:
     timestamp: float
     vu_id: int
     error_type: str | None  # None | "TIMEOUT" | "CONNECTION_REFUSED" | "DNS_ERROR" | "SSL_ERROR"
+    occurrence: int = 1
+    total_occurrences: int = 1
 
 
 @dataclass
@@ -113,11 +115,15 @@ class MetricsCollector:
             error_breakdown: dict[str, int] = {}
             for r in results:
                 if r.error_type is not None:
-                    key = r.error_type
+                    label = r.error_type
                 elif not (200 <= r.status < 300):
-                    key = str(r.status)
+                    label = str(r.status)
                 else:
                     continue
+                if r.total_occurrences > 1:
+                    key = f"{label} (call #{r.occurrence} of {r.total_occurrences})"
+                else:
+                    key = label
                 error_breakdown[key] = error_breakdown.get(key, 0) + 1
 
             service = results[0].service if results else "monolith"
