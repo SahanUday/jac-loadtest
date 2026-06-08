@@ -516,3 +516,47 @@ def test_missing_body_warning_emitted_once(tmp_path, capsys):
     parse_har(path, target_url="http://t:9000")
     captured = capsys.readouterr()
     assert captured.err.count("postData missing") == 1
+
+
+# ---------------------------------------------------------------------------
+# Occurrence numbering
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_occurrence_single_endpoint(tmp_path):
+    """A path that appears once gets occurrence=1, total_occurrences=1."""
+    har = make_har(entries=[_entry(url="http://h:8000/walker/search")])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    assert entries[0].occurrence == 1
+    assert entries[0].total_occurrences == 1
+
+
+@pytest.mark.unit
+def test_occurrence_repeated_endpoint(tmp_path):
+    """The same path appearing N times gets sequential occurrence numbers 1..N."""
+    har = make_har(entries=[
+        _entry(url="http://h:8000/walker/ai_chat", body='{"action":"load_history"}'),
+        _entry(url="http://h:8000/walker/ai_chat", body='{"action":"start"}'),
+        _entry(url="http://h:8000/walker/ai_chat", body='{"action":"load_history"}'),
+    ])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    assert [(e.occurrence, e.total_occurrences) for e in entries] == [
+        (1, 3), (2, 3), (3, 3)
+    ]
+
+
+@pytest.mark.unit
+def test_occurrence_different_endpoints_independent(tmp_path):
+    """Different paths each get their own independent occurrence counters."""
+    har = make_har(entries=[
+        _entry(url="http://h:8000/walker/search"),
+        _entry(url="http://h:8000/walker/create"),
+        _entry(url="http://h:8000/walker/search"),
+    ])
+    path = _write_har(tmp_path, har)
+    entries = parse_har(path, target_url="http://t:9000")
+    assert entries[0].occurrence == 1 and entries[0].total_occurrences == 2  # search #1
+    assert entries[1].occurrence == 1 and entries[1].total_occurrences == 1  # create #1
+    assert entries[2].occurrence == 2 and entries[2].total_occurrences == 2  # search #2
