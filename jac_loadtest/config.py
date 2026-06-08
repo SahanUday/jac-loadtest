@@ -5,6 +5,7 @@ Phase 2 will add jac.toml reading via jac_scale.config_loader.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 BUILT_IN_DEFAULTS: dict = {
@@ -36,7 +37,7 @@ class LoadTestConfig:
     # Load shape
     vus: int = 1
     duration: str = "30s"
-    iterations: int | None = None
+    iterations: int  = 1
     ramp_up: str = "0s"
     timeout: str = "30s"
 

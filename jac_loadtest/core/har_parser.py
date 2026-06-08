@@ -81,6 +81,22 @@ def _is_unsupported_type(entry: dict) -> bool:
     return url.startswith(("ws://", "wss://"))
 
 
+def _has_missing_body(method: str, raw_headers: list[dict], post_data: dict | None) -> bool:
+    """Return True if a request should have a body but none was captured in the HAR."""
+    if method.upper() not in ("POST", "PUT", "PATCH"):
+        return False
+    content_length = next(
+        (h["value"] for h in raw_headers if h.get("name", "").lower() == "content-length"),
+        "0",
+    )
+    try:
+        has_content = int(content_length) > 0
+    except ValueError:
+        has_content = False
+    body_text = (post_data or {}).get("text")
+    return has_content and not body_text
+
+
 def _has_cache_buster(url: str) -> bool:
     """Return True if the URL contains a stale cache-busting timestamp parameter."""
     qs = parse_qs(urlparse(url).query)
@@ -125,6 +141,7 @@ def parse_har(
     result: list[HarEntry] = []
     warned_unsupported = False
     warned_cache_buster = False
+    warned_missing_body = False
 
     for entry in raw_entries:
         req = entry["request"]
@@ -164,7 +181,21 @@ def parse_har(
         else:
             rewritten_url = original_url  # keep recorded URL; topology handles routing
 
-        headers = _sanitize_headers(req.get("headers", []))
+        raw_headers = req.get("headers", [])
+
+        if _has_missing_body(req["method"], raw_headers, req.get("postData")):
+            if not warned_missing_body:
+                print(
+                    "Warning: HAR contains POST/PUT/PATCH entries where the request body "
+                    "was not captured (postData missing despite non-zero Content-Length). "
+                    "These entries are skipped — replaying them without a body would cause "
+                    "422 errors. Re-record the HAR to capture the full request body.",
+                    file=sys.stderr,
+                )
+                warned_missing_body = True
+            continue
+
+        headers = _sanitize_headers(raw_headers)
 
         post_data = req.get("postData", {}) or {}
         body = post_data.get("text") or None
