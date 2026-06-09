@@ -4,6 +4,7 @@ Phase 0: dataclass with built-in defaults only.
 Phase 2 will add jac.toml reading via jac_scale.config_loader.
 """
 from __future__ import annotations
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,6 +15,7 @@ BUILT_IN_DEFAULTS: dict = {
     "iterations": 1,
     "ramp_up": "0s",
     "timeout": "30s",
+    "workers": os.cpu_count() or 1,
     "mode": "monolith",
     "think_time": "none",
     "think_time_scale": 1.0,
@@ -40,6 +42,7 @@ class LoadTestConfig:
     iterations: int  = 1
     ramp_up: str = "0s"
     timeout: str = "30s"
+    workers: int = 1
 
     # Traffic
     mode: str = "monolith"
@@ -129,6 +132,7 @@ def from_args(args: object) -> LoadTestConfig:
         iterations=resolve("iterations"),
         mode=resolve("mode"),
         vus=resolve("vus"),
+        workers=resolve("workers"),
         duration=resolve("duration"),
         ramp_up=resolve("ramp_up"),
         timeout=resolve("timeout"),

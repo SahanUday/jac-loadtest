@@ -103,7 +103,7 @@ def render_console(stats: list[EndpointStats], config: LoadTestConfig, actual_du
     display_duration = actual_duration_s if actual_duration_s is not None else parse_duration(config.duration)
     console.print(
         f"Duration: {display_duration:.0f}s   VUs: {config.vus}   "
-        f"Ramp-up: {config.ramp_up}   Mode: {config.mode}"
+        f"Ramp-up: {config.ramp_up}   Mode: {config.mode}   Workers: {config.workers}"
     )
 
 
