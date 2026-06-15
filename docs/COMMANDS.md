@@ -32,8 +32,9 @@ Flags marked **CLI only** are never read from `jac.toml` — they change per env
 |------|---------|----------------|--------|-------------|
 | `--url` | — (required in monolith mode) | URL string, e.g. `http://localhost:8000` | CLI only | Target base URL. Replaces the origin recorded in the HAR; path and query string are preserved. Changes per environment so not suitable for `jac.toml`. |
 | `--mode` | `monolith` | `monolith` \| `microservice` | CLI + jac.toml | Deployment topology. `monolith` routes all requests to `--url`. `microservice` reads service prefix→URL routing from `jac.toml` and sends each request directly to its service. |
-| `--vus` | `1` | Positive integer, e.g. `50` | CLI + jac.toml | Number of virtual users (concurrent coroutines). Each VU replays the full HAR sequence independently. Practical ceiling is ~200–500 VUs due to Python's GIL. |
-| `--duration` | `30s` | Time string: `30s`, `2m`, `1h` | CLI + jac.toml | How long to run the test. Each VU runs until wall clock exceeds start + duration. Mutually usable with `--iterations` — first limit reached wins. |
+| `--vus` | `1` | Positive integer, e.g. `50` | CLI + jac.toml | Number of virtual users (concurrent coroutines). Each VU replays the full HAR sequence independently. Practical ceiling is ~200–500 VUs per worker. |
+| `--workers` | CPU count | Positive integer, e.g. `4` | CLI + jac.toml | Number of worker processes. Each worker runs its own asyncio event loop on a separate OS thread, bypassing the GIL. Capped automatically at `--vus` so no idle processes are spawned. Use `1` for single-process mode. |
+| `--duration` | `30s` | Time string: `30s`, `2m`, `1h` | CLI + jac.toml | How long to run the test. **Currently not enforced inside the VU loop** — VUs stop only when `--iterations` is reached or Ctrl+C is pressed. Flag is accepted and stored but does not yet limit run time. |
 | `--iterations` | `1` | Positive integer, e.g. `100` | CLI + jac.toml | Stop each VU after N complete HAR replays. Defaults to `1` (one full HAR replay per VU). `--duration` and `--iterations` are mutually usable — first limit reached wins. |
 | `--ramp-up` | `0s` | Time string: `10s`, `1m` | CLI + jac.toml | Stagger VU startup over this duration. With `--vus 50 --ramp-up 10s`, VU 1 starts at t=0s, VU 50 starts at t=9.8s. Prevents thundering herd at test start. |
 | `--rps` | `0` (unlimited) | Non-negative integer, e.g. `100` | CLI + jac.toml | Global requests-per-second cap across all VUs combined. Uses a shared token bucket. `0` means no cap. |
@@ -110,6 +111,7 @@ Settings appropriate for team-wide defaults can be committed in `jac.toml`. CLI 
 [plugins.scale.loadtest]
 # Load shape
 vus                   = 20
+workers               = 4          # worker processes (default: CPU core count)
 duration              = "60s"
 ramp_up               = "10s"
 timeout               = "30s"

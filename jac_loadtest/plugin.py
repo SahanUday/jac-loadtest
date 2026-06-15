@@ -21,6 +21,8 @@ registry = get_registry()
                    help="Deployment mode: monolith or microservice"),
         Arg.create("vus", typ=int, default=None, short="",
                    help="Number of virtual users"),
+        Arg.create("workers", typ=int, default=None, short="",
+                   help="Number of worker processes (default: CPU core count)"),
         Arg.create("duration", typ=str, default=None, short="",
                    help="Test duration (e.g. 30s, 2m, 1h)"),
         Arg.create("iterations", typ=int, default=None, short="",

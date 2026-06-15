@@ -10,14 +10,15 @@
 6. [Virtual User Lifecycle](#virtual-user-lifecycle)
 7. [HAR Parser](#har-parser)
 8. [Load Engine](#load-engine)
-9. [Exit Codes and Thresholds](#exit-codes-and-thresholds)
-10. [Auth Module](#auth-module)
-11. [Topology Module](#topology-module)
-12. [Metrics Collector](#metrics-collector)
-13. [Reporter](#reporter)
-14. [CLI Reference](#cli-reference)
-15. [Extension Points](#extension-points)
-16. [Constraints and Known Limitations](#constraints-and-known-limitations)
+9. [Multi-Process Execution](#multi-process-execution)
+10. [Exit Codes and Thresholds](#exit-codes-and-thresholds)
+11. [Auth Module](#auth-module)
+12. [Topology Module](#topology-module)
+13. [Metrics Collector](#metrics-collector)
+14. [Reporter](#reporter)
+15. [CLI Reference](#cli-reference)
+16. [Extension Points](#extension-points)
+17. [Constraints and Known Limitations](#constraints-and-known-limitations)
 
 ---
 
@@ -152,8 +153,6 @@ cannot correctly replay. These are filtered out unconditionally regardless of
 | `eventsource` | Server-Sent Events stream — `resp.read()` would block forever |
 | `document` | Full-page navigations, not API calls |
 | `font` | Font files — Chrome sets `_resourceType="font"` but MIME is often `application/octet-stream` (not `font/*`), so the MIME filter alone misses them |
-| `stylesheet` | Covered by MIME filter too; belt-and-suspenders |
-| `script` | JS bundles; covered by MIME filter too |
 | `manifest` | Web app manifests |
 | `texttrack` | Subtitle/caption tracks |
 | `media` | Audio/video streams |
@@ -192,6 +191,24 @@ Warning: HAR contains URLs with cache-busting timestamp parameters
 causes the server to reject the request.
 ```
 
+### Missing Body Filter (always active)
+
+Some browsers omit the request body from HAR recordings even when `Content-Length > 0` — typically when the DevTools recorder is attached after the page loads. Replaying such entries without a body would cause 422 Unprocessable Entity on every request.
+
+An entry is skipped when:
+- Method is `POST`, `PUT`, or `PATCH`
+- `Content-Length` header is present and greater than 0
+- `postData.text` is absent or empty
+
+A single warning is printed to stderr on the first occurrence:
+
+```
+Warning: HAR contains POST/PUT/PATCH entries where the request body was not
+captured (postData missing despite non-zero Content-Length). These entries
+are skipped — replaying them without a body would cause 422 errors.
+Re-record the HAR to capture the full request body.
+```
+
 ---
 
 ## Module Map
@@ -203,9 +220,10 @@ jac_loadtest/
 ├── config.py           LoadTestConfig — three-layer resolution: CLI flags → jac.toml → built-in defaults
 │
 ├── core/               ← NO jac-scale knowledge. Works with any HTTP server.
-│   ├── har_parser.py   Parse HAR 1.2, filter entries, rewrite URLs
-│   ├── engine.py       asyncio VU pool, ramp-up, RPS cap, duration/iteration control
-│   └── metrics.py      Per-request recording, latency histograms, percentile calc
+│   ├── har_parser.py      Parse HAR 1.2, filter entries, rewrite URLs
+│   ├── engine.py          asyncio VU pool, ramp-up, RPS cap, iteration control
+│   ├── process_runner.py  Multi-process coordinator: splits VUs across worker processes, merges metrics
+│   └── metrics.py         Per-request recording, latency histograms, percentile calc
 │
 ├── bridge/             ← jac-scale-aware layer. Thin adapters over core.
 │   ├── auth.py         Login via jac-scale /user/login, per-VU JWT injection
@@ -225,7 +243,8 @@ cli.py
   └── registers JacMetaImporter (must happen before any jac_scale import)
   └── uses config, core/*, bridge/*, output/
 
-core/*          depends on: standard library + aiohttp only
+core/*              depends on: standard library + aiohttp only
+core/process_runner depends on: core/engine, core/metrics, core/har_parser, bridge/topology, bridge/auth
 bridge/auth     depends on: core/har_parser, aiohttp
 bridge/topology depends on: jac_scale.config_loader, jac_scale.microservices.service_registry
 output/*        depends on: core/metrics, rich
@@ -373,6 +392,7 @@ any directory with no configuration file required.
 [plugins.scale.loadtest]
 # Load shape
 vus                   = 20
+workers               = 4            # worker processes (default: CPU core count)
 duration              = "60s"
 ramp_up               = "10s"
 timeout               = "30s"
@@ -418,7 +438,7 @@ per environment, or contain sensitive data that must not be version-controlled:
 ```mermaid
 flowchart TD
     A[".har file"] --> B["HAR Parser\ncore/har_parser.py"]
-    B --> C{"Filter entries\nMIME type check"}
+    B --> C{"Filter entries\nMIME / resource type"}
     C -->|kept| D["HarEntry list\nordered"]
     C -->|dropped| Z1["discarded"]
 
@@ -427,12 +447,17 @@ flowchart TD
     F -->|monolith| G["Single target URL\nfrom --url flag"]
     F -->|microservice| H["Read jac.toml\nbuild prefix to URL table"]
 
-    G --> I["Load Engine\ncore/engine.py"]
-    H --> I
+    G --> W{"--workers > 1?"}
+    H --> W
 
-    I --> J["Auth Module\nbridge/auth.py\nif credentials given"]
-    J --> K["Per-VU JWT token"]
-    K --> I
+    W -->|yes| PA["Pre-authenticate all VUs\n& resolve DNS\n(main process)"]
+    PA --> PR["Process Runner\ncore/process_runner.py\nspawn worker processes"]
+    PR --> WP1["Worker 1\nVU slice 0..k"]
+    PR --> WP2["Worker 2\nVU slice k..n"]
+    WP1 --> I["Load Engine\ncore/engine.py\nasyncio VU pool"]
+    WP2 --> I
+
+    W -->|no| I
 
     I --> L["N Virtual Users\nasyncio coroutines"]
     L --> M["HTTP Requests\naiohttp"]
@@ -441,7 +466,9 @@ flowchart TD
 
     M --> O["Metrics Collector\ncore/metrics.py"]
     O --> P["RequestResult records\nlatency, status, endpoint"]
-    P --> Q["Reporter\noutput/reporter.py"]
+    PR -->|merge samples| MG["Merged MetricsCollector"]
+    P --> MG
+    MG --> Q["Reporter\noutput/reporter.py"]
     Q --> R["Console / JSON / HTML"]
 ```
 
@@ -520,6 +547,8 @@ class HarEntry:
     think_time_ms: float         # timings.wait from HAR recording
     is_login: bool               # True if path matches login_path
     original_url: str            # original recorded URL (for debugging/logging)
+    occurrence: int = 0          # 1-based index of this path in the HAR (e.g. 2nd call to /walker/search)
+    total_occurrences: int = 0   # total times this path appears in the HAR
 ```
 
 ### URL Rewriting
@@ -595,18 +624,26 @@ caused 400 errors on every request, while local HTTP/1.1 dev servers were unaffe
 ### Concurrency Model
 
 ```python
-async def run_all_vus(entries, config, topology, auth_provider, metrics):
+async def run_all_vus(
+    entries, config, metrics,
+    topology=None, auth_provider=None,
+    vu_id_offset=0,           # starting VU ID for this worker's slice
+    pre_authed_tokens=None,   # {vu_id: token} from main process (multi-process path)
+    pre_resolved_hosts=None,  # {hostname: ip} pre-resolved by main process
+):
     tasks = []
-    for vu_id in range(config.vus):
-        delay = (vu_id / config.vus) * config.ramp_up_seconds
-        task = asyncio.create_task(run_vu(vu_id, delay, entries, ...))
+    for i in range(config.vus):
+        delay = (i / config.vus) * ramp_up_seconds if config.vus > 1 else 0.0
+        task = asyncio.create_task(
+            _run_vu(vu_id=vu_id_offset + i, delay=delay, ...)
+        )
         tasks.append(task)
     await asyncio.gather(*tasks)
 ```
 
 Each VU is an independent coroutine. There is no shared mutable state between VUs — each has its own:
-- `aiohttp.ClientSession` (owns cookie jar, connection pool, and timeout config)
-- JWT token (set during auth phase)
+- `aiohttp.ClientSession` with a `TCPConnector` (owns cookie jar, connection pool, and timeout config)
+- JWT token (injected from `pre_authed_tokens` on the multi-process path, or fetched during auth phase on the single-process path)
 - Iteration counter and request sequence position
 
 ### Request Timeout
@@ -625,47 +662,97 @@ Controlled by `--timeout 30s` (default: 30 seconds). Timed-out requests are reco
 ### Request Execution
 
 ```python
-async def send_request(session, entry, token, rps_limiter):
-    async with rps_limiter:          # acquire RPS token if cap is set
-        headers = {**entry.headers}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+async def _send_request(session, entry, vu_id, config, loop, token, topology):
+    headers = dict(entry.headers)
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
-        t_start = loop.time()
-        try:
-            async with session.request(
-                entry.method,
-                entry.url,
-                headers=headers,
-                data=entry.body,
-                allow_redirects=False,   # record the redirect itself, not its destination
-            ) as resp:
-                t_end = loop.time()
-                return RequestResult(
-                    endpoint=normalize_path(entry.url),
-                    status=resp.status,
-                    latency_ms=(t_end - t_start) * 1000,
-                    bytes_received=resp.content_length or 0,
-                    timestamp=t_start,
-                    error_type=None,
-                )
-        except asyncio.TimeoutError:
-            return RequestResult(endpoint=normalize_path(entry.url), status=0,
-                                 latency_ms=config.timeout_seconds * 1000,
-                                 bytes_received=0, timestamp=t_start, error_type="TIMEOUT")
-        except aiohttp.ClientConnectorError:
-            return RequestResult(endpoint=normalize_path(entry.url), status=0,
-                                 latency_ms=0, bytes_received=0, timestamp=t_start,
-                                 error_type="CONNECTION_REFUSED")
+    # topology.resolve() returns (request_url, service_name); raises ValueError if no route
+    if topology is not None:
+        request_url, service_name = topology.resolve(entry.url)
+    else:
+        request_url, service_name = entry.url, "monolith"
+
+    t0 = loop.time()
+    try:
+        async with session.request(
+            entry.method, request_url, headers=headers,
+            data=entry.body, allow_redirects=False,
+        ) as resp:
+            body = await resp.read()
+            return RequestResult(
+                endpoint=normalize_path(entry.url), service=service_name,
+                status=resp.status, latency_ms=(loop.time() - t0) * 1000,
+                bytes_received=len(body), timestamp=t0, vu_id=vu_id,
+                error_type=None, occurrence=entry.occurrence,
+                total_occurrences=entry.total_occurrences,
+            )
+    except asyncio.TimeoutError:
+        return RequestResult(..., error_type="TIMEOUT")
+    except aiohttp.ClientConnectorDNSError:
+        return RequestResult(..., error_type="DNS_ERROR")
+    except aiohttp.ClientSSLError:
+        return RequestResult(..., error_type="SSL_ERROR")
+    except aiohttp.ClientConnectorError:
+        return RequestResult(..., error_type="CONNECTION_REFUSED")
+    except aiohttp.ServerDisconnectedError:
+        return RequestResult(..., error_type="SERVER_DISCONNECTED")
+    except aiohttp.ClientOSError:
+        return RequestResult(..., error_type="CONNECTION_RESET")
+    except Exception as e:
+        return RequestResult(..., error_type=str(e).upper() or type(e).__name__.upper())
 ```
 
 ### Duration vs Iteration Control
 
+> **Note:** Duration-based stopping (`--duration`) is currently not enforced inside the VU loop — the duration check is disabled while multiprocessing support is being finalised. VUs currently stop only when `--iterations` is reached or a stop signal is received. The `--duration` flag is accepted and recorded in config but does not limit run time on its own.
+
 | Mode | Config | Behaviour |
 |---|---|---|
-| Duration | `--duration 30s` | Each VU runs until wall clock exceeds start + duration |
-| Iterations | `--iterations 100` | Each VU stops after completing 100 full HAR replays |
-| Both | both set | First limit reached wins |
+| Iterations | `--iterations N` | Each VU stops after completing N full HAR replays |
+| Stop signal | Ctrl+C | First SIGINT sets `stop_requested`; VUs finish current iteration |
+
+---
+
+## Multi-Process Execution
+
+**File:** `core/process_runner.py`
+
+When `--workers N` (N > 1), `cli.py` delegates to `run_multiprocess()` instead of calling `asyncio.run(run_all_vus(...))` directly. This bypasses Python's GIL and lets each worker use a full CPU core for its event loop.
+
+### Worker Slicing
+
+VUs are distributed as evenly as possible across workers. `_compute_slices()` returns `[(vu_id_offset, worker_vu_count), ...]`:
+
+```
+--vus 10 --workers 3  →  [(0, 4), (4, 3), (7, 3)]
+```
+
+Each worker receives its slice's `vu_id_offset` and runs a `LoadTestConfig` with `vus = worker_vu_count`. Worker count is capped at `config.vus` so no idle processes are ever spawned.
+
+### Spawn Start Method
+
+`multiprocessing.get_context("spawn")` is used instead of `fork`. This ensures each worker gets a clean interpreter with no inherited asyncio event loop — `fork` + asyncio leads to deadlocks.
+
+### Pre-Authentication
+
+With `fork` ruled out, workers cannot share objects from the parent process. To avoid an auth burst (N workers × M VUs all hitting `/user/login` simultaneously), `_pre_authenticate_all()` runs in the main process before any worker spawns:
+
+1. All unique credential indices are authenticated concurrently (up to 50 in parallel).
+2. A `token_by_vu` dict is built mapping each VU ID to its JWT.
+3. Workers receive only their slice of this dict and never touch the auth endpoint.
+
+### Pre-Resolved DNS
+
+Similarly, `_resolve_hosts()` resolves the target hostname once in the main process. Each worker receives the `{hostname: ip}` mapping and injects it into its `aiohttp.TCPConnector` via `_PreResolvedResolver` — workers skip DNS entirely, eliminating the thundering-herd DNS burst on startup.
+
+### Result Collection
+
+Each worker sends exactly one `("ok", [RequestResult, ...]) | ("error", traceback_str)` tuple to a shared `multiprocessing.Queue`. The main process collects one result per worker, joins all processes, then merges all sample lists into a single `MetricsCollector`.
+
+If any worker reports an error, the first error traceback is re-raised as `RuntimeError` in the main process. Workers still alive after a `KeyboardInterrupt` are terminated in a `finally` block.
+
+---
 
 ### Graceful Shutdown (Two-Signal Model)
 
@@ -746,19 +833,22 @@ This module is jac-scale-aware. It knows the `/user/login` endpoint request and 
 
 ### Login Flow
 
-Before the test starts, each VU authenticates independently:
+Before the test starts, all VU credentials are authenticated in a single controlled burst — either in the main process (multi-process path) or inside `run_all_vus` (single-process path). Workers receive tokens directly and never touch the auth endpoint.
 
 ```mermaid
 sequenceDiagram
-    participant VU as Virtual User N
+    participant Main as Main Process
     participant Auth as Auth Module
     participant Server as jac-scale Server
+    participant Worker as Worker Process(es)
 
-    VU->>Auth: get_token(vu_id, credentials_list)
-    Auth->>Server: POST /user/login
-    Note right of Server: {"identity": {...},<br/>"credential": {...}}
+    Main->>Auth: _pre_authenticate_all(config, auth_provider, total_vus)
+    Note over Main,Auth: Up to 50 concurrent auth requests
+    Auth->>Server: POST /user/login (per unique credential)
     Server-->>Auth: {"ok": true, "data": {"token": "eyJ..."}}
-    Auth->>VU: JWT token string
+    Auth-->>Main: token_by_vu {vu_id: token}
+    Main->>Worker: spawn with token slice {vu_id: token}
+    Note over Worker: VUs inject token directly — no auth requests
 ```
 
 ### Credentials Assignment
@@ -916,7 +1006,10 @@ class RequestResult:
     timestamp: float        # unix timestamp of request start
     vu_id: int              # which VU sent this
     error_type: str | None  # None = HTTP response received (any status)
-                            # "TIMEOUT", "CONNECTION_REFUSED", "DNS_ERROR", "SSL_ERROR"
+                            # "TIMEOUT", "CONNECTION_REFUSED", "DNS_ERROR", "SSL_ERROR",
+                            # "SERVER_DISCONNECTED", "CONNECTION_RESET", or exception class name
+    occurrence: int         # 1-based index of this path in the HAR (e.g. 2nd of 3 calls)
+    total_occurrences: int  # total times this path appears in the HAR
 ```
 
 When `error_type` is set, `status` is always `0`. This distinguishes network-level
@@ -970,7 +1063,7 @@ class EndpointStats:
 ```
 
 Note: `error_breakdown` keys are strings — either HTTP status codes (`"500"`, `"404"`)
-or network error type names (`"TIMEOUT"`, `"CONNECTION_REFUSED"`).
+or network error type names: `"TIMEOUT"`, `"CONNECTION_REFUSED"`, `"DNS_ERROR"`, `"SSL_ERROR"`, `"SERVER_DISCONNECTED"`, `"CONNECTION_RESET"`, or the exception class name for any other error.
 
 ### Endpoint Normalization
 
@@ -1129,7 +1222,8 @@ be set under `[plugins.scale.loadtest]` in your project's `jac.toml`.
 | `--url` / `-u` | required in monolith mode | No | Target base URL — changes per environment |
 | `--mode` | `monolith` | Yes | `monolith` or `microservice` |
 | `--vus` / `-v` | `1` | Yes | Number of virtual users |
-| `--duration` / `-d` | `30s` | Yes | Test duration. Accepts `30s`, `2m`, `1h` |
+| `--workers` | CPU count | Yes | Number of worker processes. Each worker runs its own asyncio event loop on a separate OS thread. Capped at `--vus` so no idle processes are spawned. |
+| `--duration` / `-d` | `30s` | Yes | Test duration. Accepts `30s`, `2m`, `1h`. **Currently not enforced** — see Multi-Process Execution note. |
 | `--iterations` | — | Yes | Iteration cap per VU. Alternative to `--duration`. First limit reached wins. |
 | `--ramp-up` | `0s` | Yes | Time to ramp up to full VU count |
 | `--timeout` | `30s` | Yes | Per-request timeout. Exceeded requests recorded as TIMEOUT error. |
@@ -1249,12 +1343,13 @@ In Phase 2, the changes are confined to `bridge/` and `plugin.py` only:
 
 ### Python asyncio VU ceiling
 
-Python's GIL means all VU coroutines share one OS thread. For pure I/O-bound HTTP workloads, asyncio scales well to approximately **200–500 concurrent VUs** on a modern machine before event loop overhead becomes the bottleneck. Beyond this ceiling:
+Python's GIL means all VU coroutines within a single process share one OS thread. For pure I/O-bound HTTP workloads, asyncio scales well to approximately **200–500 concurrent VUs per worker** before event loop overhead becomes the bottleneck.
 
-- Run multiple `jac-loadtest` processes in parallel and merge the JSON reports
+Use `--workers N` to spread VUs across N worker processes, each with its own event loop and OS thread. With `--workers 4 --vus 400`, each worker handles ~100 VUs independently. Worker count defaults to CPU core count. Beyond the multi-process ceiling:
+
 - Use `--engine k6` (future feature) which invokes the k6 binary with no GIL constraint
 
-This limit is sufficient for validating dev and staging deployments. Production-scale stress testing requiring thousands of VUs is out of scope for Phase 1.
+`--workers 1` (single-process mode) is sufficient for validating dev and staging deployments. Use `--workers > 1` for production-scale stress testing requiring high VU counts.
 
 ### HAR session diversity problem
 
