@@ -516,9 +516,9 @@ VU 50 starts at t=9.8s
 
 This avoids a thundering herd at test start and allows the server to warm up gradually, matching real-world traffic ramp patterns.
 
-### RPS Cap (Token Bucket)
+### RPS Cap (Token Bucket) — Planned, Phase 4
 
-When `--rps N` is set, a shared `asyncio.Semaphore` with periodic token refill acts as a rate limiter. All VUs compete for tokens before sending each request. Tokens are refilled at `N tokens/second`. This enforces a global RPS ceiling regardless of how many VUs are running.
+`--rps N` is accepted and stored in `LoadTestConfig.rps` but the enforcement mechanism does not yet exist. The plan is a shared `asyncio.Semaphore` with periodic token refill — all VUs compete for tokens before sending each request, refilled at `N tokens/second`. This will enforce a global RPS ceiling regardless of how many VUs are running. **Currently the flag has no effect.**
 
 ---
 
@@ -641,14 +641,10 @@ async def run_all_vus(
         )
         tasks.append(task)
 
-    # Snapshot loop runs concurrently with VU tasks — records a StatsSnapshot every 10s
-    snapshot_task = asyncio.create_task(
-        _snapshot_loop(metrics, stop_requested, loop, interval=10.0)
-    )
-    try:
-        await asyncio.gather(*tasks)
-    finally:
-        snapshot_task.cancel()   # stops cleanly when all VUs are done
+    await asyncio.gather(*tasks)
+    # Note: StatsSnapshots are NOT generated during the run.
+    # cli.py calls metrics.generate_timeseries(t_start) after the run completes,
+    # which bins all collected RequestResult samples into 10-second buckets.
 ```
 
 Each VU is an independent coroutine. There is no shared mutable state between VUs — each has its own:
@@ -1043,8 +1039,9 @@ Layer 2 — deque(maxlen=--max-samples) of RequestResult
 
 Layer 3 — list[StatsSnapshot] (one entry per 10 seconds)
   Aggregated stats at each interval: p50, p95, p99, rps, error_rate, total_requests.
-  Written every 10 seconds during the run by _snapshot_loop() in engine.py. Never dropped.
-  Used for the RPS-over-time and latency-over-time charts in HTML report.
+  Generated POST-RUN by MetricsCollector.generate_timeseries(t_start), called in cli.py.
+  Bins all Layer 2 samples into 10-second buckets — NOT streamed during the run.
+  Used for the RPS-over-time and latency-over-time charts in HTML/JSON reports.
 ```
 
 This design ensures RPS is always accurate (Layer 1 never drops), percentile
@@ -1221,7 +1218,7 @@ Machine-readable format for CI pipelines. Written to stdout by default; written 
 }
 ```
 
-The `timeseries` array contains one entry per 10-second interval (from `_snapshot_loop`). It is empty when the test run is shorter than 10 seconds.
+The `timeseries` array contains one entry per 10-second interval, generated post-run by `MetricsCollector.generate_timeseries()`. It is empty when the test run is shorter than 10 seconds (no complete bucket to bin).
 
 ### HTML Output (`--report-format html`)
 

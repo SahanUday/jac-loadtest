@@ -71,7 +71,8 @@ Code moves into jac-scale. The `bridge/` adapters gain in-process access to jac-
 | **2 — Auth + Think Time** | Per-VU JWT login, credentials file, ramp-up, think time | `--credentials-file` runs with 0 auth errors |
 | **3 — Microservice Mode** | Topology routing, per-service metrics breakdown | `--mode microservice` reports per-service latency |
 | **4 — Production Hardening** | Graceful shutdown, exit codes, thresholds, RPS cap | Interrupted test still generates partial report; CI pipeline detects failures |
-| **5 — Reporting** | JSON + HTML reports with charts, live progress bar | `--report-format html` produces self-contained file with charts |
+| **5 — Reporting** | JSON + HTML reports with charts; missing metrics (p99.9, per-endpoint RPS, Apdex, TTFB) added | `--report-format html` produces self-contained file with charts |
+| **5b — Distributed Mode** | Multi-machine load generation via `--worker-nodes`; controller splits VUs across remote worker agents | 1000 VUs spread across multiple machines report as a single test run |
 | **6 — PyPI Release** | Tests, README, polished `pyproject.toml`, publish | `pip install jac-loadtest && jac loadtest --help` works from PyPI |
 | **7 — jac-scale Native** | Code moves into jac-scale; bridge adapters swap to in-process | `pip install jac-scale` (no `jac-loadtest`) and `jac loadtest` still works |
 | **8 — Jac Rewrite** | `cli.py` / `config.py` rewritten in Jac | No Python shim in critical path |

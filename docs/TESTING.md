@@ -187,7 +187,7 @@ All tests use `RequestResult` dataclasses built inline.
 | `test_normalize_path_multiple_ids` | `/a/123/b/456` → `/a/{id}/b/{id}` |
 | `test_total_count_never_drops` | Append 2M results → `total_count` = 2M; deque bounded at `maxlen` |
 | `test_deque_bounded` | Appending past `maxlen` drops oldest; `total_count` stays accurate |
-| `test_stats_snapshot_grows` | Calling `flush_snapshot()` grows `snapshots` list by 1 |
+| `test_timeseries_generated_post_run` | `generate_timeseries(t_start)` bins samples into 10s buckets; returns one `StatsSnapshot` per bucket; empty list when no samples exist |
 | `test_error_breakdown_http` | HTTP 500 response → `{"500": 1}` in `error_breakdown` |
 | `test_error_breakdown_network` | `error_type="TIMEOUT"` → `{"TIMEOUT": 1}` in `error_breakdown` |
 | `test_success_rate_calculation` | 9 success + 1 failure → `success_rate_pct = 90.0` |
@@ -235,7 +235,7 @@ All integration tests use `aiohttp.test_utils.TestServer` — a real HTTP server
 |------|----------------|
 | `test_single_vu_single_iteration` | 1 VU, `iterations=1`, 2 HAR entries → 2 `RequestResult` records |
 | `test_multiple_vus_correct_total` | 5 VUs × 2 entries × 3 iterations = 30 total records |
-| `test_duration_cap_stops_engine` | Engine exits when wall time ≥ duration; partial results preserved |
+| `test_iteration_cap_stops_engine` | Engine exits after each VU completes `iterations` replays; `--duration` does not stop VUs — only `--iterations` and stop signal do |
 | `test_iteration_cap_stops_vu` | VU stops after `iterations=2`; does not start a third loop |
 | `test_ramp_up_stagger` | With `--ramp-up 0.5s --vus 5`, first request timestamps span ≥ 0.5s range |
 | `test_stop_requested_event` | Set `stop_requested` event mid-run → VUs finish current iteration then exit |
@@ -273,7 +273,7 @@ Uses `RequestResult` and `EndpointStats` objects built directly (no engine neede
 | Test | What it verifies |
 |------|----------------|
 | `test_json_output_schema` | Output contains `meta`, `summary`, `endpoints` top-level keys |
-| `test_json_endpoint_fields_complete` | Each endpoint object has `p50_ms`, `p95_ms`, `p99_ms`, `rps`, `error_breakdown` |
+| `test_json_endpoint_fields_complete` | Each endpoint object has `p50_ms`, `p95_ms`, `p99_ms`, `completion_p50_s`, `completion_p95_s`, `completion_p99_s`, `error_breakdown`, latency ratings; note: per-endpoint `rps` is not present — only global `total_rps` in `meta` and `summary` |
 | `test_json_to_stdout_without_report_out` | JSON written to stdout; stderr is empty |
 | `test_json_to_file_with_report_out` | JSON written to `tmp_path/results.json`; stdout is empty |
 | `test_html_contains_inline_chartjs` | HTML has `<script>` with Chart.js content; no `src=` to external CDN |

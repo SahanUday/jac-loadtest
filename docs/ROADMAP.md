@@ -117,16 +117,17 @@ mechanism jac-scale uses. Stage 2 moves the code into jac-scale; the command nam
 > Reliable under pressure: clean shutdown, CI-compatible exit codes, network error classification.
 
 - [x] Graceful shutdown — two-signal model: first `Ctrl+C` sets `asyncio.Event(stop_requested)`, VUs finish current iteration then exit and generate report; second `Ctrl+C` kills immediately *(implemented in Phase 1)*
-- [ ] Exit codes: `0` = completed + all thresholds pass, `1` = threshold failed, `2` = config/tool error
-- [ ] Threshold flags: `--fail-on-error-rate N`, `--fail-on-p95 N`, `--fail-on-p99 N`
-- [ ] `--abort-on-fail` — stop test immediately when any threshold is first breached
-- [ ] `--threshold-start-delay Ns` — delay pass/fail evaluation (cold-start protection); metrics still collected from t=0
-- [ ] RPS cap: `--rps N` via token bucket (`asyncio.Semaphore`)
+- [ ] Exit codes: `0` = completed + all thresholds pass, `1` = threshold failed, `2` = config/tool error — **flags are parsed and stored in `LoadTestConfig` but enforcement logic is not yet wired in `cli.py`; currently all runs exit `0` unless a config error triggers `sys.exit(2)`**
+- [ ] Threshold flags: `--fail-on-error-rate N`, `--fail-on-p95 N`, `--fail-on-p99 N` — **parsed, not yet enforced**
+- [ ] `--abort-on-fail` — stop test immediately when any threshold is first breached — **parsed, not yet enforced**
+- [ ] `--threshold-start-delay Ns` — delay pass/fail evaluation (cold-start protection); metrics still collected from t=0 — **parsed, not yet enforced**
+- [ ] RPS cap: `--rps N` via token bucket (`asyncio.Semaphore`) — **`config.rps` is stored but the token-bucket check does not exist in `engine.py`; the flag is accepted but has no effect**
+- [ ] `--think-time scaled` — currently `engine.py` only checks `config.think_time == "real"`; passing `--think-time scaled` behaves identically to `none` (no delay); needs its own branch so `scaled` can be used without `real` semantics
 - [x] `error_type` on `RequestResult`: `None` | `"TIMEOUT"` | `"CONNECTION_REFUSED"` | `"DNS_ERROR"` | `"SSL_ERROR"` | `"SERVER_DISCONNECTED"` | `"CONNECTION_RESET"` — all catch blocks implemented in `engine.py`
 - [x] `error_breakdown` in `EndpointStats`: `{"500": 3, "TIMEOUT": 2}` *(implemented in Phase 1)*
 - [x] Endpoint normalization: `normalize_path()` replaces UUID/integer segments with `{id}` *(implemented in Phase 1)*
 - [x] HAR security warning: scan for `Authorization`/`Cookie` headers at startup, warn to stderr *(implemented in Phase 1)*
-- [x] Three-layer metrics storage: `total_count` int (RPS) + `deque(maxlen=N)` (percentiles) + `list[StatsSnapshot]` every 5s (time-series) *(implemented in Phase 1)*
+- [x] Three-layer metrics storage: `total_count` int (RPS) + `deque(maxlen=N)` (percentiles) + `list[StatsSnapshot]` every 10s (time-series) *(implemented in Phase 1)*
 - [x] `--max-samples N` flag to bound deque size *(implemented in Phase 1)*
 - [x] Multi-process VU distribution: `--workers N` flag + `core/process_runner.py` — splits VUs evenly across N worker processes (each with its own asyncio loop), authenticates all credentials once in the main process before spawning workers, merges samples from all workers into a single `MetricsCollector`; worker count capped at VU count; uses `spawn` context for asyncio compatibility
 - [ ] `tests/integration/test_engine.py` — VU lifecycle, duration/iteration caps, ramp-up stagger, graceful shutdown, RPS cap, TIMEOUT/CONNECTION_REFUSED error types, per-VU session isolation
@@ -138,24 +139,78 @@ mechanism jac-scale uses. Stage 2 moves the code into jac-scale; the command nam
 ### Phase 5 — Reporting + Polish
 > Machine-readable output for CI, charts for humans.
 
-- [ ] `StatsSnapshot` written every 5s during run (p50/p95/p99, RPS, error_rate per interval)
-- [ ] Live progress bar during run using Rich `Progress` → stderr
+- [x] `StatsSnapshot` written every 10s during run (p50/p95/p99, RPS, error_rate per interval)
+- [x] Live progress bar during run using Rich `Progress` → stderr
 - [x] JSON report: `--report-format json` → stdout or `--report-out` file; stderr stays human-only
 - [x] HTML report: `--report-format html --report-out <path>` → self-contained file with Chart.js RPS-over-time, latency-over-time, and per-endpoint latency bar charts
 - [x] `--report-out path` flag for JSON/HTML destination (CLI only — already wired in plugin.py and config.py)
-- [ ] `--debug` flag: per-request lines to stderr
+- [ ] `--debug` flag: per-request lines to stderr — **`config.debug` is stored but never read in `engine.py` or `cli.py`; has no effect yet**
 - [x] `--include-static` flag: include image/font/css entries in replay
 - [x] `tests/integration/test_reporter.py` — JSON schema (22 tests), stdout/file routing, HTML self-contained, console to stderr
 - [ ] `tests/e2e/test_smoke.py` — full pipeline: HAR → engine → JSON report, exit code 0, total request count correct
+
+**Missing metrics (not yet tracked or reported):**
+- [ ] **p99.9 latency** — add to `MetricsCollector.compute_endpoint_stats`, `EndpointStats`, and all three report formats; exposes tail outliers that p99 misses under high concurrency
+- [ ] **Per-endpoint RPS** — currently only global RPS is derived (`total_count / duration`); needs per-endpoint `sample_count / actual_duration_s` computed in `compute_endpoint_stats()` and exposed in console table and JSON `endpoints[]`
+- [ ] **`bytes_received` in console output** — `RequestResult.bytes_received` is tracked and present in JSON, but the Rich console table omits it; add a Bandwidth column to `render_console()` showing total KB transferred per endpoint
+- [ ] **Apdex score** — satisfaction index computed as `(satisfied + 0.5 × tolerating) / total` where satisfied = latency ≤ T, tolerating = T < latency ≤ 4T; requires a configurable threshold `--apdex-t N` (ms); expose per-endpoint and in summary
+- [ ] **TTFB breakdown** — separate Time To First Byte from total request latency; `HarEntry.think_time_ms` already captures `timings.wait` from the HAR recording but it is only used for think-time pacing; recording it as a second metric during live replay requires injecting the TTFB measurement point in `_send_request()` using `aiohttp`'s trace API
+- [ ] **Per-endpoint timeout override** — `--timeout` applies globally; no way to set a longer timeout for known slow endpoints (e.g. file upload) while keeping a tight timeout for health-check endpoints
 
 **Notes from implementation:**
 - `render_json()` returns a JSON string; `cli.py` routes it to stdout (default) or a file when `--report-out` is set
 - `render_html()` requires `--report-out`; exits with code 2 if omitted; prints "HTML report written to <path>" to stderr
 - HTML charts use Chart.js from CDN (requires network access when opening the report)
-- `MetricsCollector.snapshots` property added to expose the time-series snapshot list to reporters
-- Timeseries charts display a "No time-series data collected" message when no `flush_snapshot()` calls were made during the run (snapshots are collected in Phase 5 engine work)
+- Timeseries data is generated post-run by `MetricsCollector.generate_timeseries(t_start)` in `cli.py`, which bins all collected `RequestResult` samples into 10-second buckets; there is no in-run snapshot loop
+- Timeseries charts display a "No time-series data collected" message when the run is shorter than 10 seconds (no complete bucket exists)
 
 **Exit criterion:** `jac loadtest ... --report-format html --report-out report.html` produces a self-contained HTML file with charts. `pytest -m e2e` passes.
+
+---
+
+### Phase 5b — Distributed Load Generation (Future)
+> Overcome single-machine network/CPU limits by coordinating load across multiple machines.
+
+Single-machine `--workers` splits VUs across local CPU cores. Distributed mode sends load from **different machines**, multiplying the achievable RPS ceiling beyond what one NIC or one CPU cluster can generate — the same problem JMeter solves with its Remote Testing feature.
+
+**Architecture:**
+
+```
+[Controller machine]
+  jac loadtest --worker-nodes host1:7070,host2:7070 recording.har ...
+        │
+        │  POST /start  (config + serialised HAR entries)
+        ▼
+ [Worker node 1]          [Worker node 2]
+ jac loadtest worker      jac loadtest worker
+ --port 7070              --port 7070
+ runs run_multiprocess()  runs run_multiprocess()
+        │                       │
+        │  GET /results         │
+        └───────────┬───────────┘
+                    ▼
+           Controller merges MetricsCollector
+           samples and renders final report
+```
+
+**Planned items:**
+- [ ] `jac loadtest worker --port N` — start a lightweight `aiohttp` HTTP server that accepts a `POST /start` job (config JSON + HAR entries) and runs `run_multiprocess()` locally; returns `GET /results` as a list of `RequestResult` dicts on completion
+- [ ] Controller-side `--worker-nodes host:port,...` flag — instead of spawning local processes, POST the serialised config + HAR to each node, wait for all to complete, GET results, and merge into a single `MetricsCollector`
+- [ ] VU distribution across nodes — split total `--vus` evenly across nodes (matching `_compute_slices()` logic); each node receives its `vu_id_offset` so VU IDs are globally unique
+- [ ] Pre-authentication on controller — same `_pre_authenticate_all()` pattern; controller sends per-VU token slices to each worker so no auth burst happens at the nodes
+- [ ] Worker health check before test start — `GET /health` on each node; abort with clear error if any node is unreachable
+- [ ] Result streaming (optional) — workers can push `StatsSnapshot` updates to controller via a long-poll or WebSocket; enables live per-node progress during the run
+
+**Key difference from `--workers`:**
+
+| | `--workers N` | `--worker-nodes` |
+|---|---|---|
+| Processes run on | Same machine | Different machines |
+| Bottleneck overcome | GIL / single event loop | Single NIC + CPU ceiling |
+| Communication | `multiprocessing.Queue` (IPC) | HTTP over LAN/cluster |
+| Typical scale | 4–16 cores | 10–100+ machines |
+
+**Exit criterion:** `jac loadtest recording.har --url http://target --vus 1000 --worker-nodes node1:7070,node2:7070` distributes 500 VUs to each node, merges results, and reports aggregate latency and RPS as a single test run.
 
 ---
 
@@ -210,8 +265,9 @@ mechanism jac-scale uses. Stage 2 moves the code into jac-scale; the command nam
 | M2 — First load test | 1 | HAR replay with console report |
 | M3 — Authenticated tests | 2 | Per-VU JWT injection, credentials file |
 | M4 — Microservice support | 3 | Per-service routing and breakdown |
-| M5 — Production-grade | 4 | Graceful shutdown, thresholds, exit codes |
-| M6 — Full reporting | 5 | JSON + HTML reports with charts |
-| M7 — PyPI release | 6 | `pip install jac-loadtest && jac loadtest --help` |
-| M8 — jac-scale native | 7 | Code moves into jac-scale; command unchanged |
-| M9 — Full Jac rewrite | 8 | No Python shim |
+| M5 — Production-grade | 4 | Graceful shutdown, thresholds, exit codes, RPS cap |
+| M6 — Full reporting | 5 | JSON + HTML reports, p99.9, per-endpoint RPS, bytes, Apdex |
+| M7 — Distributed mode | 5b | Multi-machine load generation via `--worker-nodes` |
+| M8 — PyPI release | 6 | `pip install jac-loadtest && jac loadtest --help` |
+| M9 — jac-scale native | 7 | Code moves into jac-scale; command unchanged |
+| M10 — Full Jac rewrite | 8 | No Python shim |
