@@ -1,14 +1,8 @@
-"""Registers `jac loadtest` with jaclang's CommandRegistry at module import time.
+import types;
+import from jaclang.cli.registry { get_registry }
+import from jaclang.cli.command { Arg, ArgKind }
 
-The @registry.command decorator fires when this module is imported (which happens
-when jaclang loads this entry-point). The JacLoadtestCmd class is a marker that
-the entry-point points to — importing it is what matters, not instantiating it.
-"""
-from jaclang.cli.registry import get_registry
-from jaclang.cli.command import Arg, ArgKind
-
-registry = get_registry()
-
+glob registry = get_registry();
 
 @registry.command(
     name="loadtest",
@@ -73,7 +67,7 @@ registry = get_registry()
     group="testing",
     source="jac-loadtest",
 )
-def loadtest(**kwargs) -> None:
-    import types
-    from jac_loadtest.cli import run
-    run(types.SimpleNamespace(**kwargs))
+def loadtest(**kwargs: object) {
+    import from .cli { run }
+    run(types.SimpleNamespace(**kwargs));
+}

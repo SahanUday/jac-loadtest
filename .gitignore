@@ -39,7 +39,11 @@ Thumbs.db
 *.json
 *.html
 !jac_loadtest/templates/*.html
+!jac_loadtest_cli/templates/*.html
 results/
 
 # Secrets — never commit these
 .env
+
+#Jac
+.jac/

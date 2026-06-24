@@ -16,6 +16,16 @@
   .card .value { font-size: 1.75rem; font-weight: 700; }
   .card .unit { font-size: 0.875rem; color: #94a3b8; margin-left: 4px; }
   .ok { color: #22c55e; } .warn { color: #f59e0b; } .err { color: #ef4444; }
+  .lat-good { color: #22c55e; } .lat-ok { color: #f59e0b; } .lat-bad { color: #ef4444; }
+  .lat-rating { display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; margin-top: 6px; }
+  .lat-good .lat-rating { background: rgba(34,197,94,0.15); color: #22c55e; }
+  .lat-ok   .lat-rating { background: rgba(245,158,11,0.15); color: #f59e0b; }
+  .lat-bad  .lat-rating { background: rgba(239,68,68,0.15);  color: #ef4444; }
+  .lat-bench-hint { font-size: 0.68rem; color: #475569; margin-top: 4px; }
+  .lat-badge-sm { display: inline-block; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; padding: 1px 5px; border-radius: 3px; margin-left: 4px; vertical-align: middle; }
+  .lat-good .lat-badge-sm { background: rgba(34,197,94,0.15); color: #22c55e; }
+  .lat-ok   .lat-badge-sm { background: rgba(245,158,11,0.15); color: #f59e0b; }
+  .lat-bad  .lat-badge-sm { background: rgba(239,68,68,0.15);  color: #ef4444; }
   section { margin-bottom: 32px; }
   section h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: .05em; }
   .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 16px; margin-bottom: 32px; }
@@ -32,12 +42,55 @@
   tfoot td { background: #263040; font-weight: 600; border-top: 2px solid #3b4a63; }
   .meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.8rem; color: #64748b; }
   .meta span { background: #1e2433; border-radius: 4px; padding: 4px 10px; }
+  .legend { background: #1e2433; border-radius: 8px; padding: 20px 24px; margin-bottom: 32px; }
+  .legend h2 { font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: #94a3b8; text-transform: uppercase; letter-spacing: .05em; }
+  .legend table { background: none; font-size: 0.8rem; }
+  .legend thead tr { background: #263040; }
+  .legend th { color: #94a3b8; padding: 8px 14px; }
+  .legend td { padding: 8px 14px; border-top: 1px solid #263040; color: #64748b; line-height: 1.5; }
+  .legend td:first-child { color: #e2e8f0; font-family: ui-monospace, monospace; font-weight: 600; white-space: nowrap; }
   .no-data { color: #475569; font-size: 0.85rem; text-align: center; padding: 32px; }
+  .err-tag { display: inline-block; background: #3b1f1f; color: #ef4444; border-radius: 4px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 0.78rem; font-family: ui-monospace, monospace; }
 </style>
 </head>
 <body>
 <h1>jac loadtest report</h1>
 <p class="subtitle">${har_file} &nbsp;·&nbsp; ${mode} mode &nbsp;·&nbsp; ${vus} VUs &nbsp;·&nbsp; ${duration_s}s</p>
+
+<div class="legend">
+  <h2>Metric Glossary</h2>
+  <table>
+    <thead>
+      <tr><th>Metric</th><th>What it means</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>p50 Latency</td><td>Median response time — 50% of requests completed faster than this. A good baseline for typical user experience.</td></tr>
+      <tr><td>p95 Latency</td><td>95% of requests completed faster than this. Captures the slower tail; useful for SLA definitions.</td></tr>
+      <tr><td>p99 Latency</td><td>99% of requests completed faster than this. Represents near-worst-case response times experienced by users.</td></tr>
+      <tr><td>p50 Completion</td><td>Elapsed time from test start by which 50% of all requests had finished. Accounts for both when the request was sent and how long it took.</td></tr>
+      <tr><td>p95 Completion</td><td>Elapsed time from test start by which 95% of all requests had finished.</td></tr>
+      <tr><td>p99 Completion</td><td>Elapsed time from test start by which 99% of all requests had finished. High values indicate request queuing or late-stage slowdowns.</td></tr>
+      <tr><td>p50 done / p95 done / p99 done</td><td>Per-endpoint completion time percentiles — same as above but scoped to a single endpoint's requests.</td></tr>
+      <tr><td>OK%</td><td>Percentage of requests that returned a 2xx HTTP status with no network error.</td></tr>
+      <tr><td>Avg RPS</td><td>Total requests divided by total test duration — the overall throughput of the run.</td></tr>
+      <tr><td>Errs</td><td>Count of failed requests (non-2xx status or network errors such as timeout, connection refused).</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="legend" style="margin-bottom:16px">
+  <h2>Latency Benchmarks</h2>
+  <table>
+    <thead>
+      <tr><th>Metric</th><th class="lat-good" style="text-align:center">● Good</th><th class="lat-ok" style="text-align:center">● Acceptable</th><th class="lat-bad" style="text-align:center">● Bad</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>p50 (median)</td><td style="text-align:center;color:#22c55e">&lt; 100 ms</td><td style="text-align:center;color:#f59e0b">100 – 500 ms</td><td style="text-align:center;color:#ef4444">&gt; 500 ms</td></tr>
+      <tr><td>p95</td><td style="text-align:center;color:#22c55e">&lt; 500 ms</td><td style="text-align:center;color:#f59e0b">500 – 2000 ms</td><td style="text-align:center;color:#ef4444">&gt; 2000 ms</td></tr>
+      <tr><td>p99</td><td style="text-align:center;color:#22c55e">&lt; 1000 ms</td><td style="text-align:center;color:#f59e0b">1000 – 5000 ms</td><td style="text-align:center;color:#ef4444">&gt; 5000 ms</td></tr>
+    </tbody>
+  </table>
+</div>
 
 <div class="grid">
   <div class="card">
@@ -48,17 +101,23 @@
     <div class="label">Success Rate</div>
     <div class="value ${summary_ok_class}">${overall_ok_pct}<span class="unit">%</span></div>
   </div>
-  <div class="card">
+  <div class="card ${summary_p50_class}">
     <div class="label">p50 Latency</div>
     <div class="value">${summary_p50}<span class="unit">ms</span></div>
+    <span class="lat-rating">${summary_p50_rating}</span>
+    <div class="lat-bench-hint">Good &lt;100ms · Bad &gt;500ms</div>
   </div>
-  <div class="card">
+  <div class="card ${summary_p95_class}">
     <div class="label">p95 Latency</div>
     <div class="value">${summary_p95}<span class="unit">ms</span></div>
+    <span class="lat-rating">${summary_p95_rating}</span>
+    <div class="lat-bench-hint">Good &lt;500ms · Bad &gt;2000ms</div>
   </div>
-  <div class="card">
+  <div class="card ${summary_p99_class}">
     <div class="label">p99 Latency</div>
     <div class="value">${summary_p99}<span class="unit">ms</span></div>
+    <span class="lat-rating">${summary_p99_rating}</span>
+    <div class="lat-bench-hint">Good &lt;1000ms · Bad &gt;5000ms</div>
   </div>
   <div class="card">
     <div class="label">Avg RPS</div>
@@ -80,12 +139,12 @@
 
 <div class="charts">
   <div class="chart-box">
-    <h3>Latency over time (ms)</h3>
+    <h3>Cumulative latency over time (ms)</h3>
     <canvas id="latencyChart"></canvas>
     <div id="latencyNoData" class="no-data" style="display:none">No time-series data collected</div>
   </div>
   <div class="chart-box">
-    <h3>RPS over time</h3>
+    <h3>Cumulative RPS over time</h3>
     <canvas id="rpsChart"></canvas>
     <div id="rpsNoData" class="no-data" style="display:none">No time-series data collected</div>
   </div>
@@ -107,6 +166,9 @@
         <th style="text-align:right">p50 ms</th>
         <th style="text-align:right">p95 ms</th>
         <th style="text-align:right">p99 ms</th>
+        <th style="text-align:right">p50 done</th>
+        <th style="text-align:right">p95 done</th>
+        <th style="text-align:right">p99 done</th>
         <th style="text-align:right">Errs</th>
       </tr>
     </thead>
@@ -122,11 +184,16 @@
         <td class="num">${summary_p50}</td>
         <td class="num">${summary_p95}</td>
         <td class="num">${summary_p99}</td>
+        <td></td>
+        <td></td>
+        <td></td>
         <td class="num">${total_errors}</td>
       </tr>
     </tfoot>
   </table>
 </section>
+
+${error_section}
 
 <div class="meta">
   <span>Workers: ${workers}</span>
