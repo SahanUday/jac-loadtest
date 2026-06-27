@@ -64,11 +64,11 @@ cd jac_loadtest_cli
 # 3. Install the package in editable mode (runtime deps only)
 jac install -e .
 
-# 4. Also install test dependencies (when running tests)
-jac install -x test
-
-# 5. Verify the command is registered
+# 4. Verify the command is registered
 jac loadtest --help
+
+# 5. Run the test suite
+jac test tests/
 ```
 
 ### Project Layout
