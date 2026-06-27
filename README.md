@@ -76,7 +76,6 @@ jac test tests/
 ```
 jac_loadtest_cli/              ← sub-project root
 ├── jac.toml                   ← package config and dependencies
-├── pyproject.toml             ← pytest config
 ├── docs/                      ← CLI documentation
 ├── scripts/                   ← developer utilities
 ├── tests/                     ← unit, integration, e2e tests

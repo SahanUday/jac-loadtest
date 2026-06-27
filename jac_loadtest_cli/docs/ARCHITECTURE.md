@@ -216,7 +216,6 @@ Re-record the HAR to capture the full request body.
 ```
 jac_loadtest_cli/              ← sub-project root
 ├── jac.toml
-├── pyproject.toml
 ├── docs/
 ├── scripts/
 ├── tests/

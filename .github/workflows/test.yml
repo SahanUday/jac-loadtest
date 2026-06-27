@@ -65,10 +65,11 @@ jobs:
 
       - name: Run integration tests
         working-directory: jac_loadtest_cli
+        run: jac test tests/integration/
 
   # ---------------------------------------------------------------------------
   # Phase 5 — Reporting + Polish
-  # Uncomment and fill in when tests/e2e/test_smoke.py is written.
+  # Uncomment and fill in when tests/e2e/test_smoke.jac is written.
   # ---------------------------------------------------------------------------
   # test-e2e:
   #   name: E2E tests
@@ -88,15 +89,13 @@ jobs:
   #       uses: actions/cache@v4
   #       with:
   #         path: ~/.cache/pip
-  #         key: ${{ runner.os }}-pip-${{ hashFiles('jac.toml') }}
+  #         key: ${{ runner.os }}-pip-${{ hashFiles('jac_loadtest_cli/jac.toml') }}
   #         restore-keys: |
   #           ${{ runner.os }}-pip-
   #
   #     - name: Install dependencies
-  #       run: |
-  #         pip install jaclang jac-scale
-  #         pip install pytest>=8.0 pytest-asyncio>=0.23 pytest-mock>=3.12 "aiohttp[speedups]>=3.9"
+  #       run: pip install jaclang jac-scale
   #
   #     - name: Run e2e tests
-  #       run: pytest -m e2e -v
-        run: jac test tests/integration/
+  #       working-directory: jac_loadtest_cli
+  #       run: jac test tests/e2e/
