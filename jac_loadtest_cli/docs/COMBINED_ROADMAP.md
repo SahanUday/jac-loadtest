@@ -175,118 +175,332 @@ None — the reporting enhancements are surfaced in the web's results panel and 
 ## Phase 6 — Web MVP
 
 > Replace the CLI entirely for standard HTTP load testing. A user with no CLI experience
-> can run a complete test from a browser tab.
+> can run a complete authenticated load test from a browser tab.
+
+---
+
+### Note on the jac.toml Config Layer in Web Mode
+
+The CLI's three-layer config resolution calls `get_scale_config(project_dir=Path.cwd())`
+to read `[plugins.scale.loadtest]` defaults from the target app's `jac.toml`. When the
+web server runs (`jac serve` from `jac_loadtest_web/`), `cwd()` is the web project
+directory — its `jac.toml` has no `[plugins.scale.loadtest]` section, so this layer
+returns `{}` silently. The same applies to `_load_toml_routes()` in topology.jac.
+
+**The toml layer is incidentally bypassed in web mode, but this is fragile.** The clean
+fix (first CLI item below) is to add `LoadTestConfig.from_dict()` that constructs a
+complete config from a plain dict with no toml lookup, no args parsing, and no
+`get_scale_config()` call. All workspace and run settings come from the web database;
+the sv walker builds the complete dict and passes it directly to the engine.
+
+**Two separate auth systems exist and must never be confused:**
+
+| Auth System | Purpose | Stored Where |
+|---|---|---|
+| Web app auth | Log in to the jac-loadtest website | jac-scale `UserManager` on the sv codespace |
+| Load test target auth | VU credentials used to log into the *app being tested* | Workspace record (username/password or credentials CSV) |
+
+---
+
+### Data Models
+
+These are the persistent records that the sv walkers create and read. They live as
+jac-scale nodes in the sv codespace graph.
+
+```
+User  (managed by jac-scale built-in auth)
+├── id
+├── email
+└── hashed_password
+
+Workspace  (one user → many workspaces)
+├── id
+├── owner_id               ← User.id
+├── name                   ← human label, e.g. "Checkout flow staging"
+├── description            ← optional freetext
+├── mode                   ← "monolith" | "microservice"
+│
+│   ── monolith fields ──
+├── target_url             ← e.g. "http://staging.myapp.com"
+│
+│   ── microservice fields ──
+├── services_map_json      ← JSON string, e.g. '{"order":"/walker/order","inv":"/walker/inv"}'
+│                            keys starting with "/" are used as path prefixes directly
+│
+│   ── shared ──
+├── har_file_path          ← server-side path to uploaded .har file
+├── har_entries_json       ← parsed + filtered entries stored as JSON for quick load
+├── credential_mode        ← "none" | "single" | "csv"
+├── username               ← single-credential mode
+├── password               ← single-credential mode (stored hashed or in .env — never plaintext in DB)
+├── credentials_file_path  ← csv mode; server-side path to uploaded CSV
+├── login_path             ← default "/user/login"; overridable per workspace
+├── include_static         ← bool; include image/font/CSS entries in replay
+├── created_at
+└── updated_at
+
+LoadTestRun  (one workspace → many runs)
+├── id
+├── workspace_id
+├── label                  ← optional human name, e.g. "50 VUs smoke test"
+│
+│   ── engine settings (all map directly to LoadTestConfig fields) ──
+├── vus                    ← int
+├── duration               ← str, e.g. "60s"
+├── iterations             ← int (stop per-VU after N replays)
+├── ramp_up                ← str, e.g. "10s"
+├── workers                ← int (multiprocess worker count)
+├── rps                    ← int (0 = unlimited)
+├── think_time             ← "none" | "real" | "scaled"
+├── think_time_scale       ← float
+├── timeout                ← str, e.g. "30s"
+├── max_samples            ← int
+│
+│   ── thresholds ──
+├── fail_on_error_rate     ← float | None  (percent)
+├── fail_on_p95            ← float | None  (ms)
+├── fail_on_p99            ← float | None  (ms)
+├── abort_on_fail          ← bool
+├── threshold_start_delay  ← str
+│
+│   ── lifecycle ──
+├── status                 ← "pending" | "running" | "completed" | "failed" | "stopped"
+├── started_at
+├── completed_at
+├── passed_thresholds      ← bool | None
+└── results_json           ← full JSON report from render_json(); populated on completion
+```
+
+---
 
 ### CLI
-These are small additions to make the engine web-callable. The engine core is not rewritten.
 
-- [ ] `run_test_headless(config_dict)` — public Python entry point that accepts a dict (not CLI args); returns a JSON-serialisable result dict; called by the `engine_bridge` sv walker
-- [ ] `stream_metrics_callback` hook — optional callable passed to `run_all_vus()`; called with each `StatsSnapshot` so the sv walker can push it to SSE without polling a file or queue
-- [ ] `PersonaConfig` dataclass stub in `core/engine.jac` (name, flow, vus, think_time, credentials) — consumed in Phase 8; stub added here so the sv walker can pass it through
-- [ ] Verify `render_json()` and `render_html()` are importable as plain Python functions (no CLI context required)
+These additions make the engine callable from the sv codespace without any CLI context
+or jac.toml lookups.
+
+- [ ] `LoadTestConfig.from_dict(d: dict) -> LoadTestConfig` — construct directly from a
+      plain dict using `BUILT_IN_DEFAULTS` for any missing keys; **no `_load_toml_defaults()`
+      call, no `get_scale_config()`, no argparse**. This is the canonical web entry point
+      into the config layer.
+- [ ] `run_test_headless(config: LoadTestConfig, on_snapshot=None) -> dict` — public
+      Python function; runs the full engine (`run_multiprocess` or `run_all_vus`), calls
+      `on_snapshot(snapshot)` after each 10s tick so the sv walker can push SSE events,
+      and returns the JSON-serialisable result dict produced by `render_json()`.
+      No `sys.exit()`, no Rich console output, no file writes — caller controls all I/O.
+- [ ] `stream_metrics_callback` parameter wired into `run_all_vus()` and
+      `run_multiprocess()` — called with each `StatsSnapshot` object; no-op when `None`.
+- [ ] Verify `render_json()` and `render_html()` are importable as plain Python functions
+      with no CLI context required (no `sys.argv`, no Rich console initialisation at
+      import time).
+
+---
 
 ### Web
-Full UI shell — this is the primary delivery of this phase.
 
-**Stack:**
+#### Project Layout
+
 ```
 jac_loadtest_web/
-├── jac.toml                       ← kind = "fullstack"
+├── jac.toml                              ← kind = "fullstack"
 ├── main.jac
 ├── sv/
-│   ├── engine_bridge.sv.jac       ← run_test(), stop_test(), stream_metrics()
-│   ├── har_walkers.sv.jac         ← parse_har(), validate_har()
-│   ├── recorder_walkers.sv.jac    ← start_proxy(), stop_proxy()
-│   └── user_gen_walkers.sv.jac    ← generate_users(), export_csv()
+│   ├── models/
+│   │   ├── workspace.sv.jac             ← Workspace node + CRUD walkers
+│   │   └── run.sv.jac                   ← LoadTestRun node + CRUD walkers
+│   ├── auth_walkers.sv.jac              ← register(), login(), logout(), me()
+│   ├── workspace_walkers.sv.jac         ← create/list/get/update/delete workspace
+│   ├── file_walkers.sv.jac              ← upload_har(), upload_credentials_csv(),
+│   │                                       start_proxy(), stop_proxy()
+│   ├── run_walkers.sv.jac               ← create_run(), start_run(), stop_run(),
+│   │                                       get_run(), list_runs()
+│   └── stream_walkers.sv.jac            ← stream_metrics(run_id) → SSE
 └── cl/
     ├── App.cl.jac
     ├── pages/
-    │   ├── TestBuilder.cl.jac
-    │   ├── HarImport.cl.jac
-    │   ├── UserGen.cl.jac
-    │   ├── PersonaBuilder.cl.jac
-    │   └── Results.cl.jac
+    │   ├── Login.cl.jac
+    │   ├── Register.cl.jac
+    │   ├── WorkspaceList.cl.jac
+    │   ├── WorkspaceCreate.cl.jac       ← multi-step wizard
+    │   ├── WorkspaceDetail.cl.jac       ← HAR viewer + run history
+    │   ├── RunCreate.cl.jac             ← run settings form
+    │   └── RunDetail.cl.jac             ← live dashboard + final report
     └── components/
-        ├── RunControl.cl.jac
+        ├── WorkspaceCard.cl.jac
         ├── HarEntryTable.cl.jac
+        ├── RunSettingsForm.cl.jac
+        ├── RunControl.cl.jac
         ├── MetricsDashboard.cl.jac
-        └── LatencyChart.cl.jac
+        ├── LatencyChart.cl.jac
+        └── ReportViewer.cl.jac
 ```
 
-**Project & Config:**
-- [ ] New test wizard: target URL, HAR file or proxy record, VU count, duration, ramp-up
-- [ ] Save/load test configurations as `.jactest` project files (server-side JSON)
-- [ ] Three-layer config UI matching CLI: project defaults → per-run overrides → built-in
-- [ ] Thresholds panel: `--fail-on-error-rate`, `--fail-on-p95`, `--fail-on-p99`
-- [ ] Service map panel (microservice mode): enter JSON or auto-discover from `jac.toml`
+---
 
-**HAR Management — Manual Upload:**
-- [ ] Drag-and-drop HAR upload → multipart POST to `parse_har` sv walker
-- [ ] File picker button fallback
-- [ ] HAR entry viewer: method, URL, status code, MIME type, response time
-- [ ] Per-entry enable/disable toggle (replaces all-or-nothing MIME filter)
-- [ ] HAR security warning banner when `Authorization` or `Cookie` headers detected
-- [ ] HAR diff panel when a new HAR is imported over an existing one
+#### Web App Authentication
 
-**HAR Management — Proxy Recorder:**
-- [ ] `start_proxy` sv walker: spins up local HTTP proxy on configurable port
-- [ ] `stop_proxy` sv walker: stops proxy, returns parsed HAR entries to `cl`
-- [ ] Record / Stop buttons in toolbar
-- [ ] URL scope filter: capture only requests matching a base URL
-- [ ] Export recorded HAR as `.har` file from browser
-- [ ] Proxy port setting (default `8888`)
+- [ ] `register_user(email, password)` sv walker — creates a jac-scale `User` node;
+      returns JWT token for the web session
+- [ ] `login_user(email, password)` sv walker — authenticates against `UserManager`;
+      returns JWT
+- [ ] `logout_user()` sv walker — invalidates the current session token
+- [ ] `me()` sv walker — returns the current user's profile
+- [ ] `cl` login page: email + password form; on success stores token in `localStorage`
+      and redirects to `/workspaces`
+- [ ] `cl` register page: email + password + confirm form; on success auto-logs in
+- [ ] Auth guard: all `cl` routes except `/login` and `/register` check for a valid token;
+      unauthenticated requests redirect to `/login`
+- [ ] JWT attached to every sv walker call as `Authorization: Bearer <token>` header;
+      sv walkers reject requests without a valid token with `403`
 
-**User Generation:**
-- [ ] Random user generator: count, identity fields (username, email, password, custom)
-- [ ] Generation strategies: *Random* (UUID-seeded), *Realistic* (name corpus), *Pattern* (`user_{{n}}@test.com`)
-- [ ] Preview table: first N generated rows before committing
-- [ ] Export generated users as CSV (compatible with `--credentials-file`)
-- [ ] Import existing credentials CSV; preview with row count and column detection
-- [ ] Credential assignment: bind to a persona or distribute round-robin across all VUs
-- [ ] Wrap-around warning badge showing reuse ratio
+---
 
-**Persona Builder (Basic):**
-- [ ] Persona manager: create, name, colour-code up to 10 personas per test
-- [ ] Per-persona flow editor: ordered list of request steps, drag-and-drop reorder
-- [ ] Assign HAR entries to a persona: drag from HAR viewer or bulk-assign dropdown
-- [ ] Per-persona VU count (absolute integer)
-- [ ] Credential binding: attach generated list or CSV to a persona
-- [ ] Default persona: all HAR entries run as a single flow when no personas are defined
-- [ ] `engine_bridge` sv walker serialises persona configs and passes to `run_test_headless()`
-- [ ] Per-persona post-run summary: request count, error rate, p95 latency
+#### Workspace Management
 
-**Credentials Panel:**
-- [ ] Username/password fields for shared credential (maps to `--username`/`--password`)
-- [ ] Credentials CSV upload; preview of first 5 rows
-- [ ] "Generate Users" button links to user generator panel
+**Create Workspace — Multi-Step Wizard**
 
-**Run Control:**
-- [ ] Run / Stop buttons → `run_test` and `stop_test` sv walkers
-- [ ] Ramp-up progress ring: live VU count during ramp-up via SSE
-- [ ] Live RPS counter and error rate badge via SSE
+Step 1 — Basic info:
+- [ ] Workspace name (required)
+- [ ] Description (optional)
+- [ ] Mode selector: **Monolith** / **Microservice** — determines which subsequent steps appear
 
-**Real-time Metrics Dashboard:**
-- [ ] RPS-over-time line chart (live SSE streaming, not post-run)
+Step 2 — Target (mode-dependent):
+- [ ] *Monolith*: single "Target URL" field (e.g. `http://staging.myapp.com`); validated
+      with a reachability ping from the sv walker before proceeding
+- [ ] *Microservice*: service map builder — add rows of `service name → URL` pairs
+      (or paste a raw JSON map); path prefix auto-derived or manually overridden per row;
+      equivalent to `--services-map` JSON
+
+Step 3 — HAR file:
+- [ ] Drag-and-drop or file picker for `.har` upload → multipart POST to `upload_har`
+      sv walker → returns parsed entries preview
+- [ ] Alternatively: proxy recorder — "Start Recording" button calls `start_proxy`
+      sv walker (spins up a local HTTP proxy on configurable port); "Stop Recording"
+      calls `stop_proxy`, which returns the captured entries directly
+- [ ] URL scope filter for proxy: enter a base URL so only matching requests are captured
+- [ ] HAR entry viewer table: method, path, status code, MIME type, response time from
+      recording; per-entry enable/disable toggle
+- [ ] HAR security warning banner when `Authorization` or `Cookie` headers are detected
+- [ ] "Export recorded HAR" button — downloads the proxy capture as a `.har` file
+
+Step 4 — Credentials (target app auth):
+- [ ] **None** — target app has no authentication; VUs send requests unauthenticated
+- [ ] **Single credential** — one username + password shared by all VUs
+      (maps to `--username` / `--password`)
+- [ ] **CSV file** — upload a `username,password` CSV; one row per VU, wrap-around when
+      VU count exceeds row count; preview shows first 5 rows and total row count;
+      wrap-around ratio badge shown when VUs > rows
+- [ ] *If credentials provided*: login path field (default `/user/login`; overridable)
+- [ ] "Generate Users" shortcut — opens the user generator panel (below) and imports
+      the result directly into the credentials CSV slot
+
+Step 5 — Review & Create:
+- [ ] Summary card: mode, target, HAR entry count, credential mode
+- [ ] "Create Workspace" → `create_workspace` sv walker; redirects to workspace detail page
+
+**Workspace Detail Page:**
+- [ ] HAR entry table with enable/disable toggles; "Save" persists the selection to
+      `har_entries_json` on the workspace
+- [ ] "Replace HAR" button — re-runs Step 3 of the wizard against the existing workspace
+- [ ] "Update Credentials" button — re-runs Step 4
+- [ ] Run history list: all `LoadTestRun` records for this workspace, sorted newest first,
+      showing label, status badge, VUs, duration, p95, error rate, started_at
+- [ ] "New Run" button → run create page
+- [ ] Workspace settings panel: edit name, description, URL/services-map, login path,
+      include_static
+- [ ] Delete workspace (with confirmation dialog)
+
+**User Generation (accessed from credentials step or workspace detail):**
+- [ ] Count field + identity field selector (username, email, password, custom columns)
+- [ ] Generation strategy: *Random* (UUID-seeded), *Realistic* (name corpus),
+      *Pattern* (e.g. `user_{{n}}@test.com`)
+- [ ] Preview table: first 10 rows before committing
+- [ ] "Use as Credentials" button: stores generated list as the workspace's credentials CSV
+- [ ] "Download CSV" button: exports as a file compatible with `--credentials-file`
+- [ ] Import existing credentials CSV: browser file upload with column detection preview
+
+---
+
+#### Load Test Run
+
+**Create Run Page (`/workspaces/{id}/runs/new`):**
+
+The run form shows which settings it inherits from the workspace (greyed out, editable
+via override) and which are run-specific.
+
+*Inherited from workspace (display only, no override needed):*
+- Mode, target URL / services map, HAR entries, credentials, login path
+
+*Run-specific settings — required:*
+- [ ] VUs (virtual users) — integer input
+- [ ] Stop condition — radio: **Duration** (e.g. `60s`, `5m`) or **Iterations** (N replays per VU)
+
+*Run-specific settings — optional (collapsible "Advanced" section):*
+- [ ] Ramp-up duration (default `0s`)
+- [ ] Worker processes (default: CPU count)
+- [ ] RPS cap (default: 0 = unlimited)
+- [ ] Think time: None / Real / Scaled + scale multiplier
+- [ ] Per-request timeout (default `30s`)
+
+*Thresholds (collapsible):*
+- [ ] Fail if error rate exceeds N%
+- [ ] Fail if p95 latency exceeds N ms
+- [ ] Fail if p99 latency exceeds N ms
+- [ ] Abort immediately on first threshold breach (checkbox)
+- [ ] Threshold evaluation delay (default `0s` — cold-start protection)
+
+*Label:* optional freetext name for this run (e.g. "50 VU smoke test")
+
+**"Start Run" button:**
+- [ ] `create_run` sv walker: creates `LoadTestRun` node with `status = "pending"`;
+      returns `run_id`
+- [ ] `start_run` sv walker: builds `LoadTestConfig` via `LoadTestConfig.from_dict()`
+      (no toml lookup); spawns engine via `run_test_headless()` in a background
+      asyncio task; sets `status = "running"`; returns SSE stream URL
+- [ ] `cl` redirects to run detail page immediately after `start_run` succeeds
+
+**Run Detail Page (`/workspaces/{id}/runs/{run_id}`):**
+
+*During run:*
+- [ ] Status bar: `RUNNING` badge + elapsed time counter
+- [ ] Stop button → `stop_run` sv walker → engine graceful two-signal shutdown;
+      sets `status = "stopped"`; partial report is still rendered from collected metrics
+- [ ] Live RPS counter and error rate badge (SSE, updated every second)
+- [ ] Ramp-up progress ring: live VU count rising to target during ramp-up
+- [ ] RPS-over-time line chart (live SSE)
 - [ ] p50/p95/p99 latency-over-time chart (live SSE)
-- [ ] Per-endpoint latency bar chart updating every 10s
-- [ ] Error rate gauge with colour coding (green < 1%, yellow 1–5%, red > 5%)
+- [ ] Per-endpoint latency bar chart (updates every 10s)
+- [ ] Error rate gauge: green < 1%, yellow 1–5%, red > 5%
+- [ ] Debug log panel (shown only when run was created with debug=true): per-request
+      lines streamed via SSE
 
-**Reporting:**
-- [ ] Inline results viewer: renders JSON report as Chart.js charts in-page
-- [ ] Download as JSON (browser `Blob`)
-- [ ] Download as HTML: sv walker calls `render_html()`, browser triggers file download
-- [ ] Test run history: server-side list of past runs in `runs/`; list with summary stats
+*After run completes or is stopped:*
+- [ ] Status badge changes to `COMPLETED` / `STOPPED` / `FAILED`
+- [ ] Threshold pass/fail summary banner (green tick / red cross per threshold)
+- [ ] Full report rendered inline from `results_json`:
+      — Summary table: total requests, RPS, error rate, p50/p95/p99
+      — Per-endpoint latency bar chart
+      — RPS-over-time chart (post-run, from timeseries data)
+      — Error breakdown table
+- [ ] "Download JSON" button (browser Blob from `results_json`)
+- [ ] "Download HTML" button: sv walker calls `render_html()` and returns the HTML
+      string; browser triggers a file download
+- [ ] "Re-run with same settings" button — pre-fills the run create form with all
+      current settings
 
-**Settings:**
-- [ ] Worker process count selector (maps to `--workers`)
-- [ ] Timeout, think-time, RPS cap controls
-- [ ] Debug log panel: sv walker streams per-request lines via SSE when debug is on
-- [ ] Proxy port setting
-- [ ] Settings persisted to browser `localStorage`
+**SSE Streaming Architecture:**
+- [ ] `stream_metrics(run_id)` sv walker: keeps an SSE connection open; the
+      `on_snapshot` callback registered in `run_test_headless()` writes each
+      `StatsSnapshot` into an asyncio queue; the SSE walker reads from the queue
+      and sends `data: {json}\n\n` events; connection closes when the run ends
+- [ ] `cl` `MetricsDashboard` component subscribes to the SSE endpoint on mount;
+      unsubscribes when the run detail page unmounts or run status is terminal
 
-**Exit criterion:** A non-technical user can open the app, upload a HAR or record via proxy,
-generate synthetic users, assign them to a persona, click Run, watch live metrics, see a
-per-persona result summary, and download an HTML report — without touching a terminal.
+---
+
+**Exit criterion:** A user registers an account, creates a workspace (monolith mode,
+uploads a HAR, provides a credentials CSV), creates a load test run (50 VUs, 60s),
+watches live RPS and latency charts in the browser, sees a threshold pass/fail summary,
+and downloads an HTML report — without touching a terminal.
 
 ---
 
@@ -512,7 +726,7 @@ These additions enable the web's worker management UI. Mirrors CLI Phase 5b.
 | M4 | 3 | Per-service routing + breakdown | — |
 | M5 | 4 | Graceful shutdown, thresholds, exit codes, RPS cap | — |
 | M6 | 5 | JSON + HTML reports, p99.9, Apdex, TTFB | — |
-| M7 | 6 | Headless `run_test_headless()` entry point | Full HTTP web app: HAR upload, proxy recorder, user gen, personas, live metrics |
+| M7 | 6 | `LoadTestConfig.from_dict()`, `run_test_headless()` with SSE callback | User accounts; workspace wizard (mode, URL/services-map, HAR, credentials); load test runs with live dashboard and HTML report download |
 | M8 | 7 | `ws_engine.jac`, `graphql_engine.jac` | GraphQL + WebSocket protocol UI |
 | M9 | 8 | `PersonaConfig`, `run_personas()`, `RequestResult.persona` | Weighted VUs, per-persona live charts |
 | M10 | 9 | — | AI flow generation from persona descriptions |
