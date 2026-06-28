@@ -33,7 +33,7 @@ Protocol Adapters                          ←  CLI phases (per protocol)
 | 1 | CLI MVP | ✓ Done | — |
 | 2 | CLI Auth + Think Time | ✓ Done | — |
 | 3 | CLI Microservice Mode | ✓ Done | — |
-| 4 | Production Hardening | In progress | — |
+| 4 | Production Hardening | Done | — |
 | 5 | Reporting & Polish | Mostly done | — |
 | 6 | Web MVP | Minor extensions | Full UI shell |
 | 7 | GraphQL & WebSocket | Engine adapters | Protocol UI |
@@ -129,16 +129,16 @@ None — microservice mode is surfaced in the Web MVP settings panel (Phase 6).
 
 ### CLI
 - [x] Graceful shutdown — two-signal model (implemented in Phase 1)
-- [ ] Exit codes: `0` = pass, `1` = threshold failed, `2` = config/tool error (flags parsed but enforcement not wired in `cli.jac`)
-- [ ] Threshold enforcement: `--fail-on-error-rate N`, `--fail-on-p95 N`, `--fail-on-p99 N` (parsed, not enforced)
-- [ ] `--abort-on-fail` — stop test immediately on first threshold breach (parsed, not enforced)
-- [ ] `--threshold-start-delay Ns` — delay pass/fail evaluation (parsed, not enforced)
-- [ ] RPS cap: `--rps N` via token bucket in `engine.jac` (`config.rps` stored but not checked)
-- [ ] `--think-time scaled` — currently falls through to `none`; needs its own branch
-- [ ] `--debug` flag: per-request lines to stderr (`config.debug` stored but never read)
+- [x] Exit codes: `0` = pass, `1` = threshold failed, `2` = config/tool error
+- [x] Threshold enforcement: `--fail-on-error-rate N`, `--fail-on-p95 N`, `--fail-on-p99 N` — checked in `cli.jac` after report; prints `THRESHOLD FAILED: …` to stderr and exits 1
+- [x] `--abort-on-fail` — `_threshold_watcher` async task in `engine.jac` sets `stop_requested` on first breach
+- [x] `--threshold-start-delay Ns` — watcher skips checks until elapsed ≥ delay
+- [x] RPS cap: `--rps N` — per-VU sleep of `vus/rps` seconds before each request in `_run_vu`
+- [x] `--think-time scaled` — `config.think_time in ("real", "scaled")` branch in `_run_vu`
+- [x] `--debug` flag: `_print_debug(result)` writes per-request line to stderr
 - [x] `error_type` on `RequestResult`: `TIMEOUT`, `CONNECTION_REFUSED`, `DNS_ERROR`, etc.
 - [x] Multi-process VU distribution: `--workers N` + `core/process_runner.jac`
-- [ ] `tests/integration/test_engine.jac` — VU lifecycle, ramp-up, graceful shutdown, RPS cap, error types
+- [x] `tests/integration/test_engine.jac` — iterations cap, TIMEOUT, CONNECTION_REFUSED, RPS cap, think_time scaled, debug mode, abort_on_fail (7 new tests, 148 total)
 
 ### Web
 None — these CLI fixes are prerequisites for the web's threshold UI and debug panel.

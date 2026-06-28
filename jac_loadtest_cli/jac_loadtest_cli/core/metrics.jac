@@ -76,6 +76,7 @@ def normalize_path(url: str) -> str {
 obj MetricsCollector {
     has max_samples: int = 1_000_000;
     has total_count: int = 0;
+    has error_count: int = 0;
     has _samples: deque[RequestResult] = deque();
 
     def __post_init__() {
@@ -84,6 +85,9 @@ obj MetricsCollector {
 
     def record(result: RequestResult) {
         self.total_count += 1;
+        if result.error_type is not None or result.status != result.expected_status {
+            self.error_count += 1;
+        }
         self._samples.append(result);
     }
 
