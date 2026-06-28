@@ -49,7 +49,7 @@ test "microservice service label in metrics" {
                 _routes=[ServiceRoute(name="order_service", prefix="/walker/order", url=base)],
             );
             config = LoadTestConfig(
-                url=base, vus=1, iterations=1, duration="30s", mode="microservice"
+                url=base, vus=1, iterations=1,mode="microservice"
             );
             metrics = MetricsCollector();
             await run_all_vus(entries, config, metrics, topology=router);
@@ -103,7 +103,7 @@ test "microservice routes to different service urls" {
                     ServiceRoute(name="order_svc",     prefix="/walker/order",     url=url1),
                     ServiceRoute(name="inventory_svc", prefix="/walker/inventory", url=url2),
                 ]);
-                config = LoadTestConfig(vus=1, iterations=1, duration="30s", mode="microservice");
+                config = LoadTestConfig(vus=1, iterations=1,mode="microservice");
                 metrics = MetricsCollector();
                 await run_all_vus(entries, config, metrics, topology=router);
             }
@@ -140,7 +140,7 @@ test "iterations cap stops after exact N iterations" {
         async with TestServer(app) as server {
             base = f"http://{server.host}:{server.port}";
             entries = [_entry(f"{base}/api", "/api")];
-            config = LoadTestConfig(vus=1, iterations=3, duration="60s", mode="monolith", url=base);
+            config = LoadTestConfig(vus=1, iterations=3,mode="monolith", url=base);
             metrics = MetricsCollector();
             await run_all_vus(entries, config, metrics);
         }
@@ -169,7 +169,7 @@ test "timeout error type recorded for slow server" {
             base = f"http://{server.host}:{server.port}";
             entries = [_entry(f"{base}/api", "/api")];
             config = LoadTestConfig(
-                vus=1, iterations=1, duration="30s",
+                vus=1, iterations=1,
                 mode="monolith", url=base, timeout="0.3s",
             );
             metrics = MetricsCollector();
@@ -203,7 +203,7 @@ test "connection refused error type recorded" {
         dead_url = f"http://127.0.0.1:{_free_port}";
         entries = [_entry(f"{dead_url}/api", "/api")];
         config = LoadTestConfig(
-            vus=1, iterations=1, duration="30s",
+            vus=1, iterations=1,
             mode="monolith", url=dead_url,
         );
         metrics = MetricsCollector();
@@ -233,7 +233,7 @@ test "rps cap slows request rate" {
             entries = [_entry(f"{base}/api", "/api")];
             # rps=5, vus=1 → rps_interval=0.2s; 5 iterations → sleep ≥1.0s
             config = LoadTestConfig(
-                vus=1, iterations=5, duration="60s",
+                vus=1, iterations=5,
                 mode="monolith", url=base, rps=5,
             );
             metrics = MetricsCollector();
@@ -272,7 +272,7 @@ test "think_time scaled applies time scaling" {
             );
             # 200ms × 0.5 scale = 100ms per req; 3 iterations → ≥300ms total
             config = LoadTestConfig(
-                vus=1, iterations=3, duration="60s",
+                vus=1, iterations=3,
                 mode="monolith", url=base,
                 think_time="scaled", think_time_scale=0.5,
             );
@@ -301,7 +301,7 @@ test "debug mode does not affect request count" {
             base = f"http://{server.host}:{server.port}";
             entries = [_entry(f"{base}/api", "/api")];
             config = LoadTestConfig(
-                vus=2, iterations=2, duration="60s",
+                vus=2, iterations=2,
                 mode="monolith", url=base, debug=True,
             );
             metrics = MetricsCollector();
@@ -335,7 +335,6 @@ test "abort_on_fail stops test early when error threshold breached" {
             config = LoadTestConfig(
                 vus=1,
                 iterations=100,
-                duration="60s",
                 mode="monolith",
                 url=base,
                 rps=2,

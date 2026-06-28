@@ -2,7 +2,6 @@ import os;
 
 glob BUILT_IN_DEFAULTS: dict[str, object] = {
     "vus": 1,
-    "duration": "30s",
     "iterations": 1,
     "ramp_up": "0s",
     "timeout": "30s",
@@ -27,7 +26,6 @@ glob BUILT_IN_DEFAULTS: dict[str, object] = {
 
 obj LoadTestConfig {
     has vus: int = 1;
-    has duration: str = "30s";
     has iterations: int = 1;
     has ramp_up: str = "0s";
     has timeout: str = "30s";
@@ -176,7 +174,6 @@ def from_args(args: object) -> LoadTestConfig {
         mode=_resolve_str("mode", args, toml),
         vus=_resolve_int("vus", args, toml),
         workers=_resolve_int("workers", args, toml),
-        duration=_resolve_str("duration", args, toml),
         ramp_up=_resolve_str("ramp_up", args, toml),
         timeout=_resolve_str("timeout", args, toml),
         think_time=_resolve_str("think_time", args, toml),

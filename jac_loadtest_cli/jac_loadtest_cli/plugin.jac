@@ -17,8 +17,6 @@ glob registry = get_registry();
                    help="Number of virtual users"),
         Arg.create("workers", typ=int, default=None, short="",
                    help="Number of worker processes (default: CPU core count)"),
-        Arg.create("duration", typ=str, default=None, short="",
-                   help="Used as the display duration in reports when actual elapsed time is unavailable; does not stop VUs — use --iterations to control run length"),
         Arg.create("iterations", typ=int, default=None, short="",
                    help="Stop each VU after N complete HAR replays (default: 1)"),
         Arg.create("ramp-up", typ=str, default=None, short="",

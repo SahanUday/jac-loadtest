@@ -2,7 +2,7 @@ import json;
 import from rich.console { Console }
 import from rich.table { Table }
 import from rich { box }
-import from ..config { parse_duration, LoadTestConfig }
+import from ..config { LoadTestConfig }
 import from ..core.metrics { EndpointStats}
 import from ..core.metrics { percentile as pct }
 
@@ -151,7 +151,7 @@ def render_console(
         console.print("");
     }
 
-    display_duration = actual_duration_s if actual_duration_s is not None else parse_duration(config.duration);
+    display_duration = actual_duration_s if actual_duration_s is not None else 0.0;
     console.print(
         f"Duration: {display_duration:.0f}s   VUs: {config.vus}   "
         f"Ramp-up: {config.ramp_up}   Mode: {config.mode}   Workers: {config.workers}   "
@@ -176,7 +176,7 @@ def render_json(
     completion_p99_s: float = 0.0,
 ) -> str {
 
-    duration_s = actual_duration_s if actual_duration_s is not None else parse_duration(config.duration);
+    duration_s = actual_duration_s if actual_duration_s is not None else 0.0;
 
     total_reqs    = sum(s.total_requests for s in stats);
     total_success = sum(s.success_count for s in stats);
@@ -197,7 +197,6 @@ def render_json(
             "mode": config.mode,
             "vus": config.vus,
             "workers": config.workers,
-            "duration": config.duration,
             "ramp_up": config.ramp_up,
             "actual_duration_s": round(duration_s, 3),
             "total_rps": round(total_rps, 2),
@@ -287,9 +286,7 @@ def render_html(
 ) -> str {
     import json;
     import string;
-    import from ..config { parse_duration }
-
-    duration_s = actual_duration_s if actual_duration_s is not None else parse_duration(config.duration);
+    duration_s = actual_duration_s if actual_duration_s is not None else 0.0;
 
     total_reqs    = sum(s.total_requests for s in stats);
     total_success = sum(s.success_count for s in stats);

@@ -166,7 +166,6 @@ test "token injected in subsequent requests" {
             config = LoadTestConfig(
                 url=base_url,
                 vus=1,
-                duration="1s",
                 iterations=1,
                 username="user1",
                 password="pass1",
@@ -224,7 +223,6 @@ test "login entry not replayed" {
                 url=base_url,
                 vus=1,
                 iterations=1,
-                duration="30s",
                 username="user1",
                 password="pass1",
             );
@@ -265,7 +263,7 @@ test "no auth provider no auth header" {
                     original_url="/walker/search",
                 )
             ];
-            config = LoadTestConfig(url=base_url, vus=1, iterations=1, duration="30s");
+            config = LoadTestConfig(url=base_url, vus=1, iterations=1);
             metrics = MetricsCollector();
             await run_all_vus(entries, config, metrics, auth_provider=None);
         }

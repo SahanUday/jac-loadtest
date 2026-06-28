@@ -34,7 +34,6 @@ Flags marked **CLI only** are never read from `jac.toml` — they change per env
 | `--mode` | `monolith` | `monolith` \| `microservice` | CLI + jac.toml | Deployment topology. `monolith` routes all requests to `--url`. `microservice` reads service prefix→URL routing from `jac.toml` and sends each request directly to its service. |
 | `--vus` | `1` | Positive integer, e.g. `50` | CLI + jac.toml | Number of virtual users (concurrent coroutines). Each VU replays the full HAR sequence independently. Practical ceiling is ~200–500 VUs per worker. |
 | `--workers` | CPU count | Positive integer, e.g. `4` | CLI + jac.toml | Number of worker processes. Each worker runs its own asyncio event loop on a separate OS thread, bypassing the GIL. Capped automatically at `--vus` so no idle processes are spawned. Use `1` for single-process mode. |
-| `--duration` | `30s` | Time string: `30s`, `2m`, `1h` | CLI + jac.toml | Used as the fallback display duration in reports when actual elapsed time is unavailable. Does not control when VUs stop — use `--iterations` to cap run length. In normal CLI use, the actual wall-clock elapsed time always takes precedence over this value in the report. |
 | `--iterations` | `1` | Positive integer, e.g. `100` | CLI + jac.toml | Stop each VU after N complete HAR replays. Defaults to `1` (one full HAR replay per VU). The actual wall-clock time is measured and shown in the report regardless of this value. |
 | `--ramp-up` | `0s` | Time string: `10s`, `1m` | CLI + jac.toml | Stagger VU startup over this duration. With `--vus 50 --ramp-up 10s`, VU 1 starts at t=0s, VU 50 starts at t=9.8s. Prevents thundering herd at test start. |
 | `--rps` | `0` (unlimited) | Non-negative integer, e.g. `100` | CLI + jac.toml | Global requests-per-second cap across all VUs combined. `0` means no cap. Implemented as a per-VU inter-request sleep of `vus/rps` seconds, which distributes the cap evenly. |
@@ -112,7 +111,6 @@ Settings appropriate for team-wide defaults can be committed in `jac.toml`. CLI 
 # Load shape
 vus                   = 20
 workers               = 4          # worker processes (default: CPU core count)
-duration              = "60s"
 ramp_up               = "10s"
 timeout               = "30s"
 mode                  = "monolith"
@@ -158,7 +156,7 @@ jac loadtest recording.har --url http://localhost:8000
 
 # 50 VUs with 10s ramp-up
 jac loadtest recording.har --url http://localhost:8000 \
-  --vus 50 --ramp-up 10s --duration 60s
+  --vus 50 --ramp-up 10s
 
 # Per-VU credentials
 jac loadtest recording.har --url http://localhost:8000 \
@@ -169,23 +167,22 @@ jac loadtest recording.har --url http://localhost:8000 \
   --vus 10 --think-time real
 
 # Microservice mode (reads routing from jac.toml)
-jac loadtest recording.har --mode microservice --vus 30 --duration 60s
+jac loadtest recording.har --mode microservice --vus 30
 
 # Microservice mode with explicit service URLs (no jac.toml needed)
 jac loadtest recording.har --mode microservice \
   --services-map '{"order_service":"http://order.svc:8001","inventory_service":"http://inv.svc:8002"}' \
-  --vus 30 --duration 60s
+  --vus 30
 
 # CI gate: fail if p95 > 500ms or error rate > 1%
 jac loadtest recording.har --url http://staging:8000 \
-  --vus 10 --duration 30s \
-  --fail-on-p95 500 --fail-on-error-rate 1 --threshold-start-delay 10s
+  --vus 10 --fail-on-p95 500 --fail-on-error-rate 1 --threshold-start-delay 10s
 
 # HTML report
 jac loadtest recording.har --url http://localhost:8000 \
-  --vus 10 --duration 30s --report-format html --report-out results.html
+  --vus 10 --report-format html --report-out results.html
 
 # JSON report
 jac loadtest recording.har --url http://localhost:8000 \
-  --vus 10 --duration 30s --report-format json --report-out results.json
+  --vus 10 --report-format json --report-out results.json
 ```

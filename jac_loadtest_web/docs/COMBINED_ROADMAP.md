@@ -160,8 +160,6 @@ None — these CLI fixes are prerequisites for the web's threshold UI and debug 
 - [x] **Per-endpoint RPS** — `total / actual_duration_s` in `compute_endpoint_stats(actual_duration_s=)`; column in all three report formats
 - [x] **Bytes received column** — `EndpointStats.bytes_received`; formatted as B/KB/MB in console and HTML; raw bytes in JSON
 - [x] **Apdex score** — `(satisfied + 0.5 × tolerating) / total`; `--apdex-t N` flag (default 500ms); errors always frustrated; per-endpoint + global; colour-coded in all formats; summary card in HTML
-- [ ] **TTFB breakdown** — separate Time To First Byte from total latency via aiohttp trace API (deferred)
-- [ ] **Per-endpoint timeout override** — `--timeout` is currently global only (deferred)
 - [x] `tests/integration/test_reporter.jac` (21 tests)
 - [x] `tests/e2e/test_smoke.jac` — 5 tests: full pipeline, Apdex=1.0, per-endpoint RPS, console no-crash, p99.9≥p99
 
@@ -292,6 +290,12 @@ or jac.toml lookups.
 - [ ] Verify `render_json()` and `render_html()` are importable as plain Python functions
       with no CLI context required (no `sys.argv`, no Rich console initialisation at
       import time).
+- [ ] **TTFB breakdown** — separate Time To First Byte from total latency via aiohttp
+      trace API (`aiohttp.TraceConfig`); adds `ttfb_ms` field to `RequestResult`,
+      `EndpointStats`, JSON report, and HTML summary card
+- [ ] **Per-endpoint timeout override** — `--timeout` is currently global only; add
+      `timeout_ms` field to `HarEntry` and honour it in `_send_request()`; web UI exposes
+      a per-entry override in the HAR entry table
 
 ---
 

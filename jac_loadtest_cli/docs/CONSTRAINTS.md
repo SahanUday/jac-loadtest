@@ -135,25 +135,126 @@ VU 0 uses row 0, VU 1 uses row 1, wrapping around — the same assignment strate
 
 ### Current Approach
 
-All VUs run as `asyncio` coroutines within a single OS thread. The GIL is never released for CPU-bound work (latency measurement, metrics recording).
+VUs run as `asyncio` coroutines. When `--workers N` is set (default: CPU core count), the tool spawns N separate OS processes via `multiprocessing.get_context("spawn")`, each running its own asyncio event loop with an equal slice of the total VU count. Worker results are merged into a single `MetricsCollector` before reporting.
+
+Each worker is capped at `min(--workers, --vus, cpu_count)` to prevent spawning idle processes or OOM-crashing the machine. The CPU cap is enforced automatically with a warning when the requested `--workers` count exceeds available cores.
 
 ### Why This Is Good
 
-- For pure I/O-bound HTTP workloads, asyncio scales to approximately 200–500 concurrent VUs on a modern machine before event loop overhead becomes the bottleneck. This is sufficient for dev and staging load testing.
-- Single-process execution means simple deployment — no worker coordination, no distributed state, no message bus.
-- Metrics are collected in a single process with no aggregation step.
+- **GIL is bypassed.** Each worker process is a separate Python interpreter with its own GIL. CPU-bound work (metrics recording, latency arithmetic) in one worker does not block others.
+- **Practical VU ceiling is multiplied.** A 4-core machine can sustain `4 × 200–500 VUs ≈ 800–2000 VUs` before event loop overhead becomes the bottleneck — sufficient to saturate most dev and staging servers.
+- **Single-machine simplicity is preserved.** No distributed coordination, no external scheduler, no message bus. The subprocess fan-out and merge are handled transparently by `core/process_runner.jac`.
+- **Credentials are pre-distributed.** Auth is performed centrally before forking. Each worker receives its slice of the credential-to-token map, so no worker needs to call the login endpoint independently.
 
-### The Problem
+### Remaining Limitation
 
-Beyond ~500 VUs, the Python event loop becomes the bottleneck rather than the target server. This makes it impossible to generate enough load to saturate a high-throughput production server from a single machine.
+Beyond `cpu_count × ~500 VUs`, the per-process event loop overhead accumulates faster than the network I/O savings. At this scale the bottleneck is the load generator itself, not the target server. The GIL-free asyncio ceiling per process cannot be raised without switching to a non-CPython runtime.
 
 ### Future Enhancement: k6 Backend
 
-The architecture already reserves `--engine k6` as a future flag. When set, `jac-loadtest` converts the HAR to a k6 script and invokes the `k6` binary as a subprocess. k6 runs Go goroutines with no GIL constraint and handles tens of thousands of VUs from a single machine. The k6 results are parsed back into `jac-loadtest`'s JSON report format so the output is identical to the native engine.
+For extreme VU counts (tens of thousands), the architecture reserves `--engine k6` as a future flag. When set, `jac-loadtest` converts the HAR to a k6 script and invokes the `k6` binary as a subprocess. k6 runs Go goroutines with no GIL constraint and handles tens of thousands of VUs from a single machine. The k6 results are parsed back into `jac-loadtest`'s JSON report format so the output is identical to the native engine.
 
 ---
 
-## 4. No Response Assertion
+## 4. Authentication Coupled to jac-scale Auth Format
+
+### Current Approach
+
+Authentication is handled by `bridge/auth.jac` (`AuthProvider.authenticate`). When `--username`/`--password` or `--credentials-file` is provided, the tool performs a login call before the replay loop and injects the resulting token as `Authorization: Bearer <token>` on every subsequent request.
+
+Both the login request payload and the response parsing are hardcoded to match jac-scale's specific auth protocol:
+
+**Request payload (always sent as JSON):**
+```json
+{
+  "identity": {"type": "email", "value": "user@example.com"},
+  "credential": {"type": "password", "password": "secret"}
+}
+```
+
+**Response parsing (always extracts this path):**
+```python
+body["data"]["token"]
+```
+
+**Token injection (always this header):**
+```
+Authorization: Bearer <token>
+```
+
+The `--login-path` flag allows overriding the endpoint path (default: `/user/login`), but the payload shape and response shape are not configurable.
+
+### Why This Is Good
+
+- Zero configuration for jac-scale apps. No auth setup step needed — point at a jac-scale server, supply credentials, and it works.
+- Fresh tokens per run. Auth happens before the replay loop, so tokens are live for the entire test duration with no expiry risk.
+- Pre-fork auth. In multiprocessing mode (`--workers N`), all tokens are acquired before forking. Workers receive their credential slice as a plain dict — no login endpoint traffic during the load phase itself.
+
+### The Problem
+
+Any server that does not use jac-scale's exact auth contract is unsupported:
+
+| Auth style | Supported? |
+|---|---|
+| jac-scale `POST /user/login` → `{"data": {"token": "..."}}` | ✅ |
+| Different JSON login response shape (e.g. `{"access_token": "..."}`) | ❌ |
+| Different JSON login request body shape | ❌ |
+| Static API key (`X-Api-Key` header or `?api_key=` query param) | ❌ |
+| HTTP Basic Auth | ❌ |
+| OAuth 2.0 client credentials flow | ❌ |
+| Cookie-based session (no `Authorization` header) | ❌ |
+| No auth (public endpoints) | ✅ (omit `--username`/`--credentials-file`) |
+
+This means `jac-loadtest` cannot currently load test non-jac-scale services that require auth, and cannot be used against a jac-scale server that has customised its auth response envelope.
+
+### Future Enhancement: Pluggable Auth Adapters
+
+The `AuthProvider` class in `bridge/auth.jac` is already the single point of responsibility for all auth logic. Adding a pluggable adapter interface there would address all the unsupported cases without changing the engine or reporter.
+
+**Option 1 — Auth profile flags (simplest):**
+```bash
+# API key
+jac loadtest recording.har --auth-type apikey --auth-header "X-Api-Key" --auth-value "abc123"
+
+# Basic auth
+jac loadtest recording.har --auth-type basic --username alice --password secret
+
+# Custom login response path
+jac loadtest recording.har --auth-token-path "access_token"
+```
+`AuthProvider` reads `--auth-type` and branches to the correct adapter. The engine and process_runner stay unchanged.
+
+**Option 2 — Auth adapter plugin (most flexible):**
+Allow a Python module path as `--auth-adapter mypackage.auth:MyAdapter`. The tool imports and instantiates it, calling `await adapter.authenticate(vu_id, session, base_url) -> str`. This gives complete freedom over the auth flow for any target server.
+
+Option 1 covers the most common cases with no code beyond the existing CLI. Option 2 is the escape hatch for anything unusual.
+
+---
+
+## 5. Accepted Flags With No Effect
+
+The following flag is parsed without error, stored in `LoadTestConfig`, and forwarded to worker processes — but no part of the engine, parser, or reporter currently reads it to change behaviour. Passing it is silently ignored.
+
+| Flag | Config field | What was intended | Status |
+|---|---|---|---|
+| `--csrf` | `config.csrf` | Detect CSRF tokens in HAR responses and inject them into subsequent requests automatically | Not implemented — `engine.jac` and `har_parser.jac` never read `config.csrf` |
+
+### Why This Flag Exists
+
+`--csrf` was added to `LoadTestConfig` and the CLI parser during early design before the implementing code was written. It represents a genuine planned feature and is kept so that future `jac.toml` files and shell scripts that reference it do not break when the implementation lands.
+
+### `--csrf` Future Implementation
+
+CSRF token injection requires two new behaviours in the engine:
+
+1. **Detection** — after each response, scan the body and headers for a CSRF token pattern (e.g. a cookie named `csrftoken`, a response header `X-CSRF-Token`, or a JSON field `"csrf_token"`).
+2. **Injection** — before the next request, add the detected token as the appropriate header (e.g. `X-CSRFToken`) or replace the matching field in the request body.
+
+This requires per-VU state (each VU holds its own CSRF token) and a detection heuristic or configurable token field name. The flag is the correct entry point; the implementation lives in `_send_request()` in `engine.jac`.
+
+---
+
+## 6. No Response Assertion
 
 ### Current Approach
 
