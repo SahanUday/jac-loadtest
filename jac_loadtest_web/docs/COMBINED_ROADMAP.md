@@ -73,14 +73,14 @@ None — CLI must be functional before web development begins.
 - [x] `core/metrics.jac` — `RequestResult`, latency collection, p50/p95/p99
 - [x] `output/reporter.jac` — Rich console table (per-endpoint rows + summary footer)
 - [x] `config.jac` — `LoadTestConfig` dataclass + `parse_duration()`
-- [x] `--url`, `--vus`, `--duration`, `--timeout` CLI flags
+- [x] `--url`, `--vus`, `--iterations`, `--timeout` CLI flags
 - [x] `tests/unit/test_har_parser.jac` (47 tests), `tests/unit/test_metrics.jac` (21 tests)
 - [x] GitHub Actions CI
 
 ### Web
 None — web depends on a working engine.
 
-**Exit criterion:** `jac loadtest recording.har --url http://localhost:8000 --vus 10 --duration 30s` completes and prints a summary table. ✓
+**Exit criterion:** `jac loadtest recording.har --url http://localhost:8000 --vus 10` completes and prints a summary table. ✓
 
 ---
 
@@ -90,8 +90,7 @@ None — web depends on a working engine.
 
 ### CLI
 - [x] `bridge/auth.jac` — detect login entry, JWT injection, identity type inference
-- [x] Per-VU credentials via `--credentials-file credentials.csv` with wrap-around
-- [x] Shared credential fallback: `--username` / `--password`
+- [x] Shared credentials: `--username` / `--password` (all VUs, same account as HAR recording)
 - [x] Think time: `--think-time none|real` with `--think-time-scale` multiplier
 - [x] Ramp-up: `--ramp-up Ns` staggers VU startup
 - [x] Three-layer config resolution (CLI → jac.toml → built-in defaults)
@@ -100,7 +99,7 @@ None — web depends on a working engine.
 ### Web
 None — auth and think-time features are surfaced in the Web MVP UI (Phase 6).
 
-**Exit criterion:** `jac loadtest recording.har --credentials-file creds.csv` runs with 0 auth errors. 141 tests pass. ✓
+**Exit criterion:** `jac loadtest recording.har --username user --password pass` runs with 0 auth errors. 141 tests pass. ✓
 
 ---
 
@@ -329,8 +328,7 @@ jac_loadtest_web/web/
 ├── services/                            ← server walkers (.sv.jac) — jac-scale endpoints
 │   ├── auth_walkers.sv.jac              ← register(), login(), logout(), me()
 │   ├── workspace_walkers.sv.jac         ← create/list/get/update/delete workspace
-│   ├── file_walkers.sv.jac              ← upload_har(), upload_credentials_csv(),
-│   │                                       start_proxy(), stop_proxy()
+│   ├── file_walkers.sv.jac              ← upload_har(), start_proxy(), stop_proxy()
 │   ├── run_walkers.sv.jac               ← create_run(), start_run(), stop_run(),
 │   │                                       get_run(), list_runs()
 │   └── stream_walkers.sv.jac            ← stream_metrics(run_id) → SSE
@@ -720,7 +718,7 @@ These additions enable the web's worker management UI. Mirrors CLI Phase 5b.
 |-----------|-------|-----------------|-----------------|
 | M1 | 0 | `jac loadtest --help` works | — |
 | M2 | 1 | HAR replay + console report | — |
-| M3 | 2 | Per-VU JWT injection + credentials file | — |
+| M3 | 2 | Per-VU JWT injection + username/password auth | — |
 | M4 | 3 | Per-service routing + breakdown | — |
 | M5 | 4 | Graceful shutdown, thresholds, exit codes, RPS cap | — |
 | M6 | 5 | JSON + HTML reports, p99.9, Apdex, TTFB | — |
