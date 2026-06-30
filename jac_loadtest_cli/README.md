@@ -35,10 +35,6 @@ jac loadtest recording.har --url http://localhost:8000
 jac loadtest recording.har --url http://localhost:8000 \
   --vus 50 --iterations 100 --ramp-up 10s
 
-# Authenticated test with per-VU credentials
-jac loadtest recording.har --url http://localhost:8000 \
-  --vus 20 --iterations 50 --credentials-file creds.csv
-
 # Realistic pacing: replay at recorded think times, halved
 jac loadtest recording.har --url http://localhost:8000 \
   --vus 10 --iterations 30 --think-time scaled --think-time-scale 0.5
@@ -100,20 +96,9 @@ See [docs/COMMANDS.md](docs/COMMANDS.md) for the full flag reference including m
 The tool auto-detects the login request in the HAR by matching `--login-path` (default `/user/login`). At test start each VU logs in once and injects the returned JWT into all subsequent requests.
 
 ```bash
-# Shared credentials — all VUs log in as the same user
+# All VUs log in with the same account used during HAR recording
 jac loadtest recording.har --url http://localhost:8000 \
   --username admin@example.com --password secret
-
-# Per-VU credentials — VU i gets row i from the CSV (wraps around)
-jac loadtest recording.har --url http://localhost:8000 \
-  --credentials-file creds.csv
-```
-
-`creds.csv` format:
-```
-username,password
-alice@example.com,pass1
-bob@example.com,pass2
 ```
 
 ## Developer Setup

@@ -56,9 +56,8 @@ Flags marked **CLI only** are never read from `jac.toml` — they change per env
 
 | Flag | Default | Expected Value | Use in | Description |
 |------|---------|----------------|--------|-------------|
-| `--username` | — | String | CLI only | Username for shared-credential auth. All VUs log in with this identity and get separate JWT tokens. **Security-sensitive — never put in jac.toml.** |
+| `--username` | — | String | CLI only | Username for auth. All VUs log in with this identity and get separate JWT tokens. **Security-sensitive — never put in jac.toml.** |
 | `--password` | — | String | CLI only | Password paired with `--username`. **Security-sensitive — never put in jac.toml.** |
-| `--credentials-file` | — | File path, e.g. `creds.csv` | CLI only | CSV file with `username,password` rows, one per VU. VU `i` gets row `i`; wraps around if fewer rows than VUs. Enables per-VU user identity. **Security-sensitive — never commit this file.** |
 | `--login-path` | `/user/login` | URL path string | CLI + jac.toml | Path used to detect the login entry in the HAR. This entry is handled by the auth module and not replayed directly. |
 
 ---
@@ -141,7 +140,6 @@ max_samples           = 1000000
 | `har_file` | Positional arg, different every run |
 | `--url` | Changes between dev / staging / prod |
 | `--username` / `--password` | Security-sensitive — never commit |
-| `--credentials-file` | Security-sensitive — never commit |
 | `--services-map` | Environment-specific URL overrides |
 | `--report-out` | Output path changes per run |
 | `--debug` | Too noisy for committed defaults |
@@ -157,10 +155,6 @@ jac loadtest recording.har --url http://localhost:8000
 # 50 VUs with 10s ramp-up
 jac loadtest recording.har --url http://localhost:8000 \
   --vus 50 --ramp-up 10s
-
-# Per-VU credentials
-jac loadtest recording.har --url http://localhost:8000 \
-  --vus 20 --credentials-file creds.csv
 
 # Realistic pacing from recorded think times
 jac loadtest recording.har --url http://localhost:8000 \

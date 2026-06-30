@@ -196,7 +196,7 @@ the sv walker builds the complete dict and passes it directly to the engine.
 | Auth System | Purpose | Stored Where |
 |---|---|---|
 | Web app auth | Log in to the jac-loadtest website | jac-scale `UserManager` on the sv codespace |
-| Load test target auth | VU credentials used to log into the *app being tested* | Workspace record (username/password or credentials CSV) |
+| Load test target auth | VU credentials used to log into the *app being tested* | Workspace record (optional username/password — same account used during recording) |
 
 ---
 
@@ -228,10 +228,8 @@ Workspace  (one user → many workspaces)
 │   ── shared ──
 ├── har_file_path          ← server-side path to uploaded .har file
 ├── har_entries_json       ← parsed + filtered entries stored as JSON for quick load
-├── credential_mode        ← "none" | "single" | "csv"
-├── username               ← single-credential mode
-├── password               ← single-credential mode (stored hashed or in .env — never plaintext in DB)
-├── credentials_file_path  ← csv mode; server-side path to uploaded CSV
+├── username               ← optional; must match the account used during HAR recording
+├── password               ← optional; paired with username (never stored plaintext)
 ├── login_path             ← default "/user/login"; overridable per workspace
 ├── include_static         ← bool; include image/font/CSS entries in replay
 ├── created_at
@@ -398,14 +396,9 @@ Step 3 — HAR file:
 
 Step 4 — Credentials (target app auth):
 - [ ] **None** — target app has no authentication; VUs send requests unauthenticated
-- [ ] **Single credential** — one username + password shared by all VUs
-      (maps to `--username` / `--password`)
-- [ ] **CSV file** — upload a `username,password` CSV; one row per VU, wrap-around when
-      VU count exceeds row count; preview shows first 5 rows and total row count;
-      wrap-around ratio badge shown when VUs > rows
-- [ ] *If credentials provided*: login path field (default `/user/login`; overridable)
-- [ ] "Generate Users" shortcut — opens the user generator panel (below) and imports
-      the result directly into the credentials CSV slot
+- [ ] **Single credential** — one username + password shared by all VUs, matching the
+      account used when the HAR was recorded (maps to `--username` / `--password`)
+- [ ] Login path field (default `/user/login`; overridable)
 
 Step 5 — Review & Create:
 - [ ] Summary card: mode, target, HAR entry count, credential mode
@@ -422,15 +415,6 @@ Step 5 — Review & Create:
 - [ ] Workspace settings panel: edit name, description, URL/services-map, login path,
       include_static
 - [ ] Delete workspace (with confirmation dialog)
-
-**User Generation (accessed from credentials step or workspace detail):**
-- [ ] Count field + identity field selector (username, email, password, custom columns)
-- [ ] Generation strategy: *Random* (UUID-seeded), *Realistic* (name corpus),
-      *Pattern* (e.g. `user_{{n}}@test.com`)
-- [ ] Preview table: first 10 rows before committing
-- [ ] "Use as Credentials" button: stores generated list as the workspace's credentials CSV
-- [ ] "Download CSV" button: exports as a file compatible with `--credentials-file`
-- [ ] Import existing credentials CSV: browser file upload with column detection preview
 
 ---
 
@@ -512,7 +496,7 @@ via override) and which are run-specific.
 ---
 
 **Exit criterion:** A user registers an account, creates a workspace (monolith mode,
-uploads a HAR, provides a credentials CSV), creates a load test run (50 VUs, 60s),
+uploads a HAR, optionally provides credentials), creates a load test run (50 VUs, 60s),
 watches live RPS and latency charts in the browser, sees a threshold pass/fail summary,
 and downloads an HTML report — without touching a terminal.
 

@@ -4,7 +4,7 @@ import from 'react-router-dom' { useNavigate }
 import from ..components.ui.card { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import from ..components.ui.button { Button }
 import from ..components.ui.input { Input }
-import from ..components.ui.select { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
+import from ..components.ui.select { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }  # used in step 1 mode select
 import from ..components.ui.field { Field, FieldLabel, FieldContent, FieldError }
 
 def:pub WorkspaceCreate() -> JsxElement {
@@ -12,8 +12,9 @@ def:pub WorkspaceCreate() -> JsxElement {
         name: str = "",
         mode: str = "monolith",
         target_url: str = "",
-        credential_mode: str = "none",
-        login_path: str = "/login",
+        username: str = "",
+        password: str = "",
+        login_path: str = "/user/login",
         error: str = "",
         loading: bool = False;
 
@@ -33,7 +34,8 @@ def:pub WorkspaceCreate() -> JsxElement {
                 "name": name,
                 "mode": mode,
                 "target_url": target_url,
-                "credential_mode": credential_mode,
+                "username": username if username else None,
+                "password": password if password else None,
                 "login_path": login_path,
                 "include_static": False
             })
@@ -122,29 +124,36 @@ def:pub WorkspaceCreate() -> JsxElement {
                         }
                         {
                             <div className="flex flex-col gap-4">
+                                <p className="text-sm text-muted-foreground">
+                                    Leave username and password blank for public (unauthenticated) endpoints.
+                                    Use the same account that was active when the HAR was recorded.
+                                </p>
                                 <Field>
-                                    <FieldLabel>Credential mode</FieldLabel>
+                                    <FieldLabel>Username (optional)</FieldLabel>
                                     <FieldContent>
-                                        <Select
-                                            value={credential_mode}
-                                            onValueChange={lambda v: any { credential_mode = v; }}
-                                        >
-                                            <SelectTrigger>
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="none">None</SelectItem>
-                                                <SelectItem value="single">Single user</SelectItem>
-                                                <SelectItem value="csv">CSV (multiple users)</SelectItem>
-                                            </SelectContent>
-                                        </Select>
+                                        <Input
+                                            placeholder="user@example.com"
+                                            value={username}
+                                            onChange={lambda e: any { username = e.target.value; }}
+                                        />
+                                    </FieldContent>
+                                </Field>
+                                <Field>
+                                    <FieldLabel>Password (optional)</FieldLabel>
+                                    <FieldContent>
+                                        <Input
+                                            type="password"
+                                            placeholder="••••••••"
+                                            value={password}
+                                            onChange={lambda e: any { password = e.target.value; }}
+                                        />
                                     </FieldContent>
                                 </Field>
                                 <Field>
                                     <FieldLabel>Login path</FieldLabel>
                                     <FieldContent>
                                         <Input
-                                            placeholder="/login"
+                                            placeholder="/user/login"
                                             value={login_path}
                                             onChange={lambda e: any { login_path = e.target.value; }}
                                         />

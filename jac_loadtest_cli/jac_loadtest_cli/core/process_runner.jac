@@ -94,7 +94,6 @@ def _worker_fn(
         url=config.url,
         username=config.username,
         password=config.password,
-        credentials_file=config.credentials_file,
         services_map=config.services_map,
         report_out=config.report_out,
     );

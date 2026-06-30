@@ -12,14 +12,13 @@ A HAR file is a recording of one user's browser session. `jac-loadtest` replays 
 
 Authentication is handled per-VU: each VU independently calls `POST /user/login` and gets a fresh JWT token, which is injected as `Authorization: Bearer <token>` on all subsequent requests. The original recorded token is stripped and never replayed.
 
-Credentials are supplied via `--username`/`--password` (all VUs share one account) or `--credentials-file creds.csv` (VU `i` uses row `i % len(rows)` — wrap-around assignment).
+Credentials are supplied via `--username`/`--password`. All VUs share the same account — the account used when the HAR was recorded.
 
 ### Why This Is Good
 
 - **Zero scripting.** The HAR file is the entire test script. No test code to write or maintain.
 - **Correct for throughput testing.** When the goal is measuring server capacity under concurrent load (RPS, latency, error rate), replaying the same sequence from N VUs is valid and sufficient. The server handles N concurrent identical workloads — the bottleneck is real.
 - **Token freshness is guaranteed.** Each VU authenticates independently before the replay loop. There is no token expiry risk during a long run since each VU holds its own live token.
-- **`--credentials-file` works for create and read workflows.** If the request bodies do not reference ownership-tied IDs (e.g. a flow that only calls `AddTodo` and `ListTodos`), each VU can log in as a distinct user and the replay produces valid results for every user independently.
 
 ### The Problem
 
@@ -53,11 +52,20 @@ The HAR replay engine has no knowledge of the relationship between `AddTodo`'s r
 | Scenario | Works? | Guidance |
 |---|---|---|
 | Throughput / latency measurement | ✅ | Use same credentials the HAR was recorded with |
-| Auth correctness (token injection, cookie jar) | ✅ | Any valid credentials work |
-| Create-only workflows (`AddTodo` only) | ✅ | `--credentials-file` gives each VU its own account |
-| Read-only workflows (`ListTodos`) | ✅ | `--credentials-file` gives each VU their own data view |
-| Mixed create + update/delete workflows | ❌ | Must use the same credentials as the recording |
-| Testing auth isolation (user A cannot see user B's data) | ✅ | Use `--credentials-file` and assert on 403 responses |
+| Auth correctness (token injection, cookie jar) | ✅ | Supply `--username`/`--password` matching the recording |
+| Mixed create + update/delete workflows | ✅ | Use the same credentials as the recording; node IDs match |
+| Pure create-only or read-only workflows | ✅ | Single credential is sufficient |
+
+### Why CSV Credentials Cannot Fix the Node ID Problem
+
+A common first instinct is to supply multiple accounts so that different VUs replay with different user identities. Even with per-VU account diversity the HAR node ID problem remains unsolved:
+
+- VU 0 replays with alice's token but sends `{"nd": "a3f7c2d1"}` — a node belonging to sahan (the recording user). The server rejects it.
+- VU 1 replays with bob's token and sends the same `{"nd": "a3f7c2d1"}`. Same rejection.
+
+The credential column is orthogonal to the request body column. Rotating tokens does not rotate the node IDs embedded in the request payloads. Every VU fails the same requests for the same reason, just under different names.
+
+**For this reason `jac-loadtest` only supports a single `--username` / `--password` pair.** Using the same credentials as the recording user is the only mode that avoids ownership-check failures for mixed workflows. For throughput and latency measurement — the primary purpose of load testing — a single shared account is the correct and sufficient choice.
 
 ### Future Enhancement: Response Correlation
 
@@ -127,7 +135,7 @@ Call dentist
 Fix the CI
 ```
 
-VU 0 uses row 0, VU 1 uses row 1, wrapping around — the same assignment strategy already used for credentials. This is equivalent to JMeter's CSV Data Set Config and k6's `SharedArray`.
+VU 0 uses row 0, VU 1 uses row 1, wrapping around — equivalent to JMeter's CSV Data Set Config and k6's `SharedArray`.
 
 ---
 
@@ -160,7 +168,7 @@ For extreme VU counts (tens of thousands), the architecture reserves `--engine k
 
 ### Current Approach
 
-Authentication is handled by `bridge/auth.jac` (`AuthProvider.authenticate`). When `--username`/`--password` or `--credentials-file` is provided, the tool performs a login call before the replay loop and injects the resulting token as `Authorization: Bearer <token>` on every subsequent request.
+Authentication is handled by `bridge/auth.jac` (`AuthProvider.authenticate`). When `--username`/`--password` is provided, the tool performs a login call before the replay loop and injects the resulting token as `Authorization: Bearer <token>` on every subsequent request.
 
 Both the login request payload and the response parsing are hardcoded to match jac-scale's specific auth protocol:
 
@@ -203,7 +211,7 @@ Any server that does not use jac-scale's exact auth contract is unsupported:
 | HTTP Basic Auth | ❌ |
 | OAuth 2.0 client credentials flow | ❌ |
 | Cookie-based session (no `Authorization` header) | ❌ |
-| No auth (public endpoints) | ✅ (omit `--username`/`--credentials-file`) |
+| No auth (public endpoints) | ✅ (omit `--username`/`--password`) |
 
 This means `jac-loadtest` cannot currently load test non-jac-scale services that require auth, and cannot be used against a jac-scale server that has customised its auth response envelope.
 

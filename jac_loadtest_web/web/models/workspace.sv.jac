@@ -20,10 +20,8 @@ node Workspace {
     has har_entries_json: str | None = None;
 
     # target-app credentials (NOT web-app auth)
-    has credential_mode: str = "none";       # "none" | "single" | "csv"
     has username: str | None = None;
     has password: str | None = None;
-    has credentials_file_path: str | None = None;
     has login_path: str = "/user/login";
     has include_static: bool = False;
 

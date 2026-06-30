@@ -18,8 +18,8 @@ glob _FEATURES: list = [
     },
     {
         "num": "03",
-        "title": "Multi-User Credentials",
-        "desc": "Upload a username/password CSV and each virtual user authenticates independently, eliminating shared-session artifacts and giving you accurate per-user load data.",
+        "title": "Auth-Aware Replay",
+        "desc": "Configure your target app's login endpoint and credentials once per workspace. Every virtual user authenticates independently before the replay loop — no token reuse, no expiry risk during long runs.",
     },
     {
         "num": "04",
@@ -34,7 +34,7 @@ glob _FEATURES: list = [
     {
         "num": "06",
         "title": "Workspace Management",
-        "desc": "Organise target URLs, HAR files, credentials, and full run histories in named workspaces. Every completed run stores its report for side-by-side comparison.",
+        "desc": "Organise target URLs, HAR files, auth settings, and full run histories in named workspaces. Every completed run stores its report for side-by-side comparison.",
     },
 ];
 
@@ -42,7 +42,7 @@ glob _STEPS: list = [
     {
         "step": "1",
         "title": "Create a workspace",
-        "desc": "Choose monolith or microservice mode, enter your target URL, upload your HAR recording, and optionally provide credentials.",
+        "desc": "Choose monolith or microservice mode, enter your target URL, upload your HAR recording, and optionally enter the credentials used when recording.",
     },
     {
         "step": "2",

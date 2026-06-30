@@ -31,8 +31,6 @@ glob registry = get_registry();
                    help="Username for shared-credential auth"),
         Arg.create("password", typ=str, default=None, short="",
                    help="Password for shared-credential auth"),
-        Arg.create("credentials-file", typ=str, default=None, short="",
-                   help="CSV file with username,password rows (one per VU)"),
         Arg.create("login-path", typ=str, default=None, short="",
                    help="URL path detected as the login entry"),
         Arg.create("include-static", typ=bool, default=None, short="",

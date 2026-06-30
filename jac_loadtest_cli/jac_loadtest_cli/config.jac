@@ -50,7 +50,6 @@ obj LoadTestConfig {
     has url: str | None = None;
     has username: str | None = None;
     has password: str | None = None;
-    has credentials_file: str | None = None;
     has services_map: str | None = None;
     has report_out: str | None = None;
 }
@@ -167,7 +166,6 @@ def from_args(args: object) -> LoadTestConfig {
         url=_getattr_opt_str(args, "url"),
         username=_getattr_opt_str(args, "username"),
         password=_getattr_opt_str(args, "password"),
-        credentials_file=_getattr_opt_str(args, "credentials_file"),
         services_map=_getattr_opt_str(args, "services_map"),
         report_out=_getattr_opt_str(args, "report_out"),
         iterations=_resolve_int("iterations", args, toml),
