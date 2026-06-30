@@ -217,7 +217,6 @@ def:pub Landing() -> JsxElement {
     return
         <div className="min-h-screen bg-background text-foreground antialiased">
 
-            # ── Navbar ─────────────────────────────────────────── #
             <nav className="fixed top-0 inset-x-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md">
                 <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
@@ -252,7 +251,6 @@ def:pub Landing() -> JsxElement {
                 </div>
             </nav>
 
-            # ── Hero ───────────────────────────────────────────── #
             <section className="relative pt-36 pb-20 px-6 overflow-hidden">
                 <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[700px] h-[500px] rounded-full bg-primary/10 blur-3xl pointer-events-none" />
                 <div className="absolute top-20 -right-20 w-72 h-72 rounded-full bg-primary/5 blur-2xl pointer-events-none" />
@@ -291,7 +289,6 @@ def:pub Landing() -> JsxElement {
                 </div>
             </section>
 
-            # ── Stats strip ─────────────────────────────────────── #
             <section className="border-y border-border bg-muted/30 py-12 px-6">
                 <div className="max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-10">
                     {[
@@ -301,7 +298,6 @@ def:pub Landing() -> JsxElement {
                 </div>
             </section>
 
-            # ── Features ────────────────────────────────────────── #
             <section className="py-24 px-6">
                 <div className="max-w-6xl mx-auto flex flex-col gap-14">
                     <div className="flex flex-col items-center text-center gap-4">
@@ -326,7 +322,6 @@ def:pub Landing() -> JsxElement {
                 </div>
             </section>
 
-            # ── How it works ────────────────────────────────────── #
             <section className="py-24 px-6 bg-muted/20 border-y border-border">
                 <div className="max-w-6xl mx-auto flex flex-col gap-16">
                     <div className="flex flex-col items-center text-center gap-4">
@@ -352,7 +347,6 @@ def:pub Landing() -> JsxElement {
                 </div>
             </section>
 
-            # ── CTA banner ──────────────────────────────────────── #
             <section className="py-24 px-6">
                 <div className="max-w-3xl mx-auto rounded-3xl bg-primary px-10 py-16 flex flex-col items-center text-center gap-6 shadow-2xl shadow-primary/30">
                     <h2 className="text-3xl md:text-4xl font-extrabold text-primary-foreground tracking-tight">
@@ -378,7 +372,6 @@ def:pub Landing() -> JsxElement {
                 </div>
             </section>
 
-            # ── Footer ──────────────────────────────────────────── #
             <footer className="border-t border-border py-10 px-6">
                 <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 text-sm">
                     <div className="flex items-center gap-2.5">

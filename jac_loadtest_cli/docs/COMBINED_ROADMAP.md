@@ -290,9 +290,6 @@ or jac.toml lookups.
 - [ ] **TTFB breakdown** — separate Time To First Byte from total latency via aiohttp
       trace API (`aiohttp.TraceConfig`); adds `ttfb_ms` field to `RequestResult`,
       `EndpointStats`, JSON report, and HTML summary card
-- [ ] **Per-endpoint timeout override** — `--timeout` is currently global only; add
-      `timeout_ms` field to `HarEntry` and honour it in `_send_request()`; web UI exposes
-      a per-entry override in the HAR entry table
 
 ---
 
@@ -429,7 +426,7 @@ via override) and which are run-specific.
 
 *Run-specific settings — required:*
 - [ ] VUs (virtual users) — integer input
-- [ ] Stop condition — radio: **Duration** (e.g. `60s`, `5m`) or **Iterations** (N replays per VU)
+- [ ] Stop condition — **Iterations** (N replays per VU)
 
 *Run-specific settings — optional (collapsible "Advanced" section):*
 - [ ] Ramp-up duration (default `0s`)
@@ -501,7 +498,181 @@ and downloads an HTML report — without touching a terminal.
 
 ---
 
-## Phase 7 — GraphQL & WebSocket
+## Phase 7 — Persona-Based Testing
+
+> Simulate realistic user behaviour by splitting the load across distinct user archetypes, each replaying their own subset of HAR entries.
+
+### CLI
+
+- [ ] `PersonaConfig` dataclass: `name: str`, `description: str`, `entry_indices: list[int]`, `vus: int`
+- [ ] `run_personas()` orchestrator: for each persona, filters `HarEntry` list to `entry_indices`, then launches a `run_all_vus()` coroutine; all personas share a single `MetricsCollector` so aggregate metrics are correct
+- [ ] `RequestResult` gains `persona: str` field — populated by the engine from the active `PersonaConfig.name`
+- [ ] `MetricsCollector.endpoint_stats()` groups results by `(persona, endpoint)` — console, JSON, and HTML reports include per-persona rows
+- [ ] JSON report gains `"personas": [{ "name", "vus", "summary", "endpoints" }]` section
+- [ ] HTML report gains a **Personas** tab with per-persona summary cards and p95 latency bars
+- [ ] `--persona-file` flag: path to a JSON file defining persona list; mutually exclusive with `--vus` (persona mode replaces flat VU count)
+
+### Web
+
+**Run Creation Page — mode toggle:**
+- [ ] "Run mode" radio at the top of the run form: **Standard** (existing VU form, unchanged) | **Persona-based**
+- [ ] Selecting Persona-based hides the flat VU count input and shows the persona builder panel
+
+**Built-in personas (always available, read-only name and description):**
+- [ ] **New User** — first-time visitor who explores the app cautiously; browses content, registers or logs in, performs one core action, then exits. Tends to hit onboarding and discovery endpoints.
+- [ ] **Power User** — experienced user who navigates directly to their goal; performs complex multi-step workflows (create → update → delete) in rapid succession with minimal think time.
+- [ ] **Casual Visitor** — bounces between a few pages without completing a core flow; high read-to-write ratio, short sessions, frequently hits list/search endpoints without acting on results.
+
+**Persona builder panel (one card per persona):**
+- [ ] Persona name + description — read-only for built-in personas; editable text fields for custom personas
+- [ ] HAR entry selector: checklist showing every entry from the workspace HAR (`METHOD /path` rows); user ticks which entries this persona replays — unticked entries are not sent by this persona's VUs
+- [ ] VU count input: absolute number of virtual users for this persona
+- [ ] Collapse/expand toggle per card to manage screen space with many personas
+
+**Persona management:**
+- [ ] "Add Custom Persona" button — appends a blank persona card with empty entry selection
+- [ ] Delete button on custom personas (built-in personas cannot be deleted)
+- [ ] Total VU summary strip below the persona cards: `N personas · X total VUs · Y HAR entries covered`
+- [ ] Validation: at least one persona must have VU count > 0 and at least one HAR entry selected before the run can start
+
+**Remaining run settings (same for both modes):**
+- [ ] Ramp-up, timeout, think-time, RPS cap, thresholds — identical controls as Standard mode, applied globally across all personas
+
+**Run detail page:**
+- [ ] Per-persona rows in the live endpoint table (persona name as first column)
+- [ ] Final report section: per-persona summary cards showing VUs, RPS, error rate, p95
+
+**Exit criterion:** A user creates a run in Persona-based mode, assigns login+browse entries to "New User" (10 VUs) and create+update entries to "Power User" (20 VUs), runs the test, and sees separate p95 latency per persona in the report.
+
+---
+
+## Phase 8 — Automatic Endpoint Discovery + AI Persona Assignment
+
+> Two AI-powered capabilities that live entirely in the web layer: discover every endpoint the app exposes without manual effort, then let AI decide which endpoints belong to each persona.
+
+**Architecture boundary:** The CLI is a pure execution engine — it only ever consumes `HarEntry` objects and `PersonaConfig` objects, both of which are prepared by the web layer before a run starts. The CLI gains no new code in this phase. All endpoint discovery, spec parsing, browser-agent orchestration, and AI persona assignment run in the `sv` (server-side Jac) codespace. Once the web layer has built the entry list and persona configs, it calls the same `run_personas()` function introduced in Phase 7 — unchanged.
+
+---
+
+### Pillar 1 — Automatic Endpoint Discovery
+
+**Goal:** give users three progressively automated paths to populate the workspace endpoint list. Every path ultimately produces the same thing: a list of `HarEntry`-compatible records stored in `har_entries_json` on the workspace node. The run pipeline is identical regardless of which path was used.
+
+#### Path A — HAR file upload (already built in Phase 6)
+The existing workspace wizard HAR upload path already parses entries and stores them in `har_entries_json`. No new work. Displayed first in the discovery UI as the recommended fast path.
+
+#### Path B — API specification document
+
+### Web / SV
+- [ ] `services/spec_parser.sv.jac` — `sv` walker that accepts a URL or uploaded file; fetches and parses OpenAPI 3.0 / 3.1 or Swagger 2.0 YAML/JSON; emits a flat list of `{ method, path, summary, request_schema, response_schema }` records
+- [ ] Synthesises `HarEntry`-compatible dicts from the spec (method, path, empty body, status 200) and writes them to `workspace.har_entries_json` — no changes to the engine pipeline or CLI required
+- [ ] Workspace creation wizard: **Discovery source** step added between HAR upload and credentials; options are **Upload HAR** (existing) | **API spec URL or file** | **Browser agent** (below)
+- [ ] API spec option: URL text input (e.g. `https://api.example.com/openapi.json`) or file upload (`.yaml` / `.json`); "Import spec" calls `spec_parser` sv walker
+- [ ] Parsed endpoints appear in the HAR entry table (same `HarEntryTable` component from Phase 6); method badge, path, and spec summary shown as a tooltip on the path cell
+- [ ] Accepted formats: OpenAPI 3.0, OpenAPI 3.1, Swagger 2.0
+
+#### Path C — Browser-agent recording (when no HAR or spec is available)
+
+If a user has neither a recorded HAR file nor an API spec, they can instruct a headless browser agent to visit the target URL, navigate the app automatically, and capture all network traffic — producing a real `.har` file that is then parsed by the existing `parse_har()` function.
+
+### Web / SV
+- [ ] `services/browser_agent.sv.jac` — `sv` walker that spawns a headless Chromium session via `playwright` (Python); attaches network interception to capture every API request/response; the captured traffic is saved as a `.har` file server-side
+- [ ] `start_browser_agent` sv walker: accepts `target_url`, `max_pages` (default 20), `idle_timeout_s` (default 30), optional `username`/`password` (re-uses workspace credentials); launches the agent as a background asyncio task; returns a `recording_id`
+- [ ] Navigation decisions powered by `by-llm` — a `BrowserAction` structured return type ensures the model always produces a valid, parseable action:
+  ```jac
+  import from byllm.lib { Model }
+  glob llm = Model(model_name="claude-sonnet-4-6");
+
+  obj BrowserAction {
+      has selector: str;   # CSS selector or href to interact with
+      has action: str;     # "click" | "fill" | "submit"
+      has value: str;      # for fill actions; empty string otherwise
+      has reason: str;     # one-line explanation for the action choice
+  }
+
+  """You are an exploratory QA tester. Choose the next page interaction most
+  likely to reveal new API traffic. Never target elements whose href or form
+  action contains: /delete, /destroy, /reset, /drop, /wipe, /purge."""
+  def decide_next_action(page_url: str, elements: list[str]) -> BrowserAction
+      by llm(temperature=0.3);
+  ```
+- [ ] `by-llm` automatically coerces the model's JSON output to `BrowserAction`; malformed output triggers up to 3 automatic retries with corrective feedback before the agent skips the page
+- [ ] The `reason` field is forwarded to the SSE stream so users see the agent's live reasoning in the progress panel
+- [ ] Safety rule baked into the docstring prompt: never interact with elements matching the destructive path pattern list
+- [ ] `stop_browser_agent` sv walker: signals graceful shutdown; agent flushes the HAR file and returns captured entry count
+- [ ] SSE progress stream (`stream_agent_progress`): emits one event per page action — `{ page: int, url: str, action: str, reason: str, captured_count: int }`; the `cl` codespace renders a live log panel
+- [ ] On completion: the `.har` file is parsed by the existing `parse_har()` function; resulting entries are written to `workspace.har_entries_json`; user is redirected to the HAR entry table to review before proceeding
+- [ ] **Browser agent** option in the discovery source step with a config panel: max pages, idle timeout, credentials toggle; "Start Recording" / "Stop Recording" buttons; live log panel; entry count badge
+- [ ] Security notice banner shown before recording starts: lists the destructive path patterns the agent will never interact with
+
+### CLI
+No changes. The CLI receives `HarEntry` objects from the web layer exactly as it did in Phases 6 and 7. It has no awareness of whether entries came from a HAR upload, a spec, or a browser agent.
+
+---
+
+### Pillar 2 — AI Persona Assignment
+
+**Goal:** once the endpoint list is populated (by any path above), users describe a persona's personality in plain English and AI pre-selects the relevant endpoints — replacing the manual checklist step from Phase 7. VU counts and all other run configuration remain manual.
+
+### Web / SV
+- [ ] `services/persona_ai.sv.jac` — uses `by-llm` with a `PersonaSelection` structured return type so the model's output is automatically parsed and validated without any manual JSON extraction:
+  ```jac
+  import from byllm.lib { Model }
+  glob llm = Model(model_name="claude-sonnet-4-6");
+
+  obj PersonaSelection {
+      has indices: list[int];          # positions in the entries list to include
+      has rationale: dict[str, str];   # index (as str) -> one-line reason
+  }
+
+  """Select the HAR entry indices that a user matching the given persona
+  description would most likely exercise during a real session."""
+  def assign_persona_endpoints(description: str, entries: list[dict]) -> PersonaSelection
+      by llm(temperature=0.0, incl_info={"entries": entries});
+  ```
+- [ ] `by-llm` coerces the model output to `PersonaSelection`; malformed output triggers automatic retries (up to 3); if all retries fail the sv walker returns an error to the `cl` side and the user is prompted to try again
+- [ ] "Auto-assign endpoints" button on each persona card calls the `assign_persona_endpoints` sv walker; pre-ticks the returned `indices` in the HAR entry checklist
+- [ ] Rationale tooltip on each auto-selected row: shows `rationale[str(idx)]` from the model's response
+- [ ] User retains full manual control after auto-assignment — they can add or remove ticks freely; AI output is a starting point, not a lock
+- [ ] Safety gate: if the model selects a destructive endpoint (DELETE, or path matching the destructive pattern list), that row is highlighted amber and requires an explicit manual tick to confirm inclusion
+- [ ] "Reassign" button with free-text feedback field: user types a correction ("this persona never deletes items"); the correction is appended to `description` and `assign_persona_endpoints` is called again; updated indices replace the previous selection
+- [ ] Save the finalised persona (description + selected indices + VU count) as a `.jacpersona` JSON template; "Export" and "Import" buttons on the persona builder for reuse across workspaces
+
+### CLI
+No changes. When the user starts a run, the web layer serialises the personas (with their pre-resolved entry index lists) into `PersonaConfig` objects and calls `run_personas()` from Phase 7 directly. The CLI never makes any LLM calls.
+
+**`by-llm` configuration (shared by both pillars):**
+- [ ] All AI calls use the `by-llm` plugin from `jac-byllm`; configured via `[plugins.byllm]` in the sv-side `jac.toml`:
+  ```toml
+  [plugins.byllm]
+  system_prompt = "You are a load-testing assistant helping design realistic traffic patterns."
+
+  [plugins.byllm.model]
+  default_model = "claude-sonnet-4-6"
+
+  [plugins.byllm.call_params]
+  temperature = 0.0
+  max_tokens = 2000
+  ```
+- [ ] API key set via `ANTHROPIC_API_KEY` env var (consumed by LiteLLM under the hood — no direct `anthropic` SDK calls in application code)
+- [ ] Model override without config file: set `BYLLM_DEFAULT_MODEL` env var; web Settings panel writes both `ANTHROPIC_API_KEY` and `BYLLM_DEFAULT_MODEL` to the sv process `.env` file
+- [ ] Offline mode: if `ANTHROPIC_API_KEY` is absent, the sv walker returns `{"error": "no_api_key"}` and the `cl` side shows a banner — "Configure your API key in Settings to use AI features"; manual HAR upload and manual persona checklist (Phase 7) remain fully functional
+- [ ] Testing: `MockLLM` (from `byllm.lib`) swaps in deterministic outputs during unit tests so AI-path tests run without API calls:
+  ```jac
+  import from byllm.lib { MockLLM }
+  glob llm = MockLLM(
+      model_name="mockllm",
+      config={"outputs": ['{"indices":[0,2],"rationale":{"0":"GET /todos","2":"POST /todos"}}']},
+  );
+  ```
+
+**Exit criterion (browser-agent path):** A user with no HAR file and no spec enters their app URL, clicks "Start Recording", watches the live log as the agent browses 15 pages, reviews the 40-entry table, types "an experienced user who creates and manages todos" into a persona card, clicks "Auto-assign endpoints", reviews the pre-ticked 12 entries (including one amber destructive entry they manually un-tick), and launches a 30-VU persona-based run — without recording a single request or ticking a single checkbox manually.
+
+**Exit criterion (spec path):** A user pastes an OpenAPI URL, the spec is parsed into 25 endpoints, they describe two personas and click "Auto-assign" for each, and launch a mixed persona test in under 3 minutes.
+
+---
+
+## Phase 9 — GraphQL & WebSocket
 
 > First protocol expansion beyond HTTP.
 
@@ -527,71 +698,6 @@ New engine adapter files — the existing HTTP engine is not changed.
 - [ ] Side-by-side scenario editor: define an HTTP flow + a WebSocket subscription in the same test run
 
 **Exit criterion:** A user can run a test that simultaneously hammers a REST endpoint with 50 VUs and holds 20 concurrent GraphQL subscriptions, seeing unified metrics in one dashboard.
-
----
-
-## Phase 8 — Advanced Persona-Based Testing
-
-> Full persona system with weighted VU allocation, staggered ramp-up, and live per-persona metrics.
-
-### CLI
-These engine changes enable the web's advanced persona UI.
-
-- [ ] `PersonaConfig` dataclass (full): `name`, `flow`, `vus`, `weight`, `think_time`, `ramp_up`, `credentials`
-- [ ] `run_personas()` orchestrator: launches one `run_all_vus()` coroutine per persona concurrently; all share a single `MetricsCollector`
-- [ ] `RequestResult.persona: str` field — populated from the running persona's name
-- [ ] `EndpointStats` grouped by `(persona, endpoint)` — reports show per-persona rows
-- [ ] JSON report gains `personas[]` section with per-persona summary
-- [ ] HTML report gains a **Personas** section with individual persona summary cards
-
-### Web
-- [ ] Per-persona VU weight: percentage of total VUs (`weight: 0.4` → 40%) as alternative to absolute count
-- [ ] Per-persona ramp-up: independently staggered persona activation
-- [ ] Per-persona think-time override: set a different think-time strategy per persona
-- [ ] Persona import/export: download/upload `.jacpersona` files (JSON) for reuse across tests
-- [ ] Live RPS line chart broken down by persona colour during a run (SSE)
-- [ ] Live error rate badge per persona in the run control bar
-- [ ] Persona comparison chart: side-by-side p95 latency per persona over time
-- [ ] Per-persona error rate timeline
-- [ ] Persona traffic mix chart: RPS contribution of each persona during the run
-
-**Exit criterion:** A user defines two personas ("new visitor" and "returning user"), assigns weight-based VU allocation, sets independent ramp-ups, runs the test, and sees live per-persona RPS alongside separate p95 latency in the final report.
-
----
-
-## Phase 9 — AI-Powered Flow Generation
-
-> Make persona definition zero-effort: describe the user in plain English, get a ready-to-run flow.
-
-### CLI
-No engine changes required. The Claude API call lives in the `sv` codespace (server-side).
-
-- [ ] Verify `jac_loadtest_cli` is importable as a plain Python module in the `sv` codespace without any CLI context (already true from Phase 6 headless entry point)
-
-### Web
-**API Surface Discovery:**
-- [ ] OpenAPI/Swagger spec input: enter `{url}/openapi.json` or upload `.yaml`; `sv` walker fetches and parses all endpoints, methods, request/response schemas
-- [ ] HAR-based discovery: use existing HAR import; parsed endpoints become the candidate step list
-- [ ] Sitemap crawl: `sv` walker fetches `sitemap.xml` and crawls discovered URLs
-- [ ] Discovered surface shown as a checklist of endpoints to include/exclude before generating flows
-
-**LLM Flow Generation:**
-- [ ] Persona description text input: plain-English description of the user type
-- [ ] "Generate Flow" button: `generate_flow` sv walker calls Claude API (`anthropic` Python SDK)
-  - Prompt includes: persona description, available endpoints (method + path), OpenAPI schema hints
-  - Instruction to return ordered JSON array of steps: method, path, example body, suggested think time
-- [ ] Generated flow shown in flow editor as editable draft steps
-- [ ] Safety gate: destructive endpoints (DELETE, paths with `/delete`/`/destroy`/`/reset`) flagged with warning banner requiring explicit confirmation
-- [ ] "Regenerate" button with feedback input for refinement
-- [ ] Flow diff view: compare revised flow against previous version
-- [ ] Save generated flows as reusable `.jacpersona` templates
-
-**LLM Configuration:**
-- [ ] API key management: entered in Settings panel; stored server-side in `.env` — never exposed to browser
-- [ ] Model selector: default `claude-sonnet-4-6`, allow override
-- [ ] Offline mode: AI generation disabled with clear explanation if no API key is set
-
-**Exit criterion:** A user pastes an OpenAPI URL, writes a two-sentence persona description, clicks "Generate Flow", reviews the 8-step draft, approves it, and runs a 50-VU test — all without writing a line of code.
 
 ---
 
@@ -724,9 +830,9 @@ These additions enable the web's worker management UI. Mirrors CLI Phase 5b.
 | M5 | 4 | Graceful shutdown, thresholds, exit codes, RPS cap | — |
 | M6 | 5 | JSON + HTML reports, p99.9, Apdex, TTFB | — |
 | M7 | 6 | `LoadTestConfig.from_dict()`, `run_test_headless()` with SSE callback | User accounts; workspace wizard (mode, URL/services-map, HAR, credentials); load test runs with live dashboard and HTML report download |
-| M8 | 7 | `ws_engine.jac`, `graphql_engine.jac` | GraphQL + WebSocket protocol UI |
-| M9 | 8 | `PersonaConfig`, `run_personas()`, `RequestResult.persona` | Weighted VUs, per-persona live charts |
-| M10 | 9 | — | AI flow generation from persona descriptions |
+| M8 | 7 | `PersonaConfig`, `run_personas()`, `RequestResult.persona`, `--persona-file` | Standard/Persona mode toggle; 3 built-in personas; HAR entry selector per persona; per-persona report section |
+| M9 | 8 | — (Phase 7 CLI unchanged; all new work is web/sv) | Discovery source picker (HAR / spec / browser agent); AI persona assignment with rationale tooltips; `spec_parser.sv.jac`, `browser_agent.sv.jac`, `persona_ai.sv.jac` |
+| M10 | 9 | `ws_engine.jac`, `graphql_engine.jac` | GraphQL + WebSocket protocol UI |
 | M11 | 10 | `grpc_engine.jac`, `db_engine.jac` (Postgres/MySQL/MongoDB) | gRPC builder, SQL/Mongo query editors |
 | M12 | 11 | `--worker-nodes` flag, `jac loadtest worker` server mode | Worker management UI, geo region reporting |
 | M13 | 12 | PyPI release + jac-scale integration | Docker image, CI plugin, public launch |

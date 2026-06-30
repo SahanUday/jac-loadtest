@@ -12,7 +12,7 @@ def:pub ReportViewer(
     results_json: str,
     passed_thresholds: any = None
 ) -> JsxElement {
-    report = json.loads(results_json or "{}");
+    report_json = json.loads(results_json or "{}");
 
     def downloadJson() {
         blob = Blob([results_json], {"type": "application/json"});
@@ -24,9 +24,9 @@ def:pub ReportViewer(
         URL.revokeObjectURL(url);
     }
 
-    summary = report.get("summary", {});
-    endpoints = report.get("endpoints", []);
-    snapshots = report.get("snapshots", []);
+    summary = report_json.get("summary", {});
+    endpoints = report_json.get("endpoints", []);
+    snapshots = report_json.get("snapshots", []);
 
     threshold_banner_variant = "secondary" if passed_thresholds is None else (
         "default" if passed_thresholds else "destructive"
