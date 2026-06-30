@@ -304,13 +304,31 @@ or jac.toml lookups.
 #### Project Layout
 
 ```
-jac_loadtest_web/
-├── jac.toml                              ← kind = "fullstack"
-├── main.jac
-├── sv/
-│   ├── models/
-│   │   ├── workspace.sv.jac             ← Workspace node + CRUD walkers
-│   │   └── run.sv.jac                   ← LoadTestRun node + CRUD walkers
+jac_loadtest_web/web/
+├── jac.toml                              ← project config (npm deps, jac-shadcn theme)
+├── main.jac                             ← app entry point — mounts <App />
+├── frontend.cl.jac                      ← root client component with router + routes
+│
+├── pages/                               ← route-level page components (.cl.jac)
+│   ├── Login.cl.jac
+│   ├── Register.cl.jac
+│   ├── WorkspaceList.cl.jac
+│   ├── WorkspaceCreate.cl.jac           ← multi-step wizard
+│   ├── WorkspaceDetail.cl.jac           ← HAR viewer + run history
+│   ├── RunCreate.cl.jac                 ← run settings form
+│   └── RunDetail.cl.jac                 ← live dashboard + final report
+│
+├── components/                          ← reusable client components (.cl.jac)
+│   ├── ui/                              ← jac-shadcn components (auto-generated, do not edit)
+│   ├── WorkspaceCard.cl.jac
+│   ├── HarEntryTable.cl.jac
+│   ├── RunSettingsForm.cl.jac
+│   ├── RunControl.cl.jac
+│   ├── MetricsDashboard.cl.jac
+│   ├── LatencyChart.cl.jac
+│   └── ReportViewer.cl.jac
+│
+├── services/                            ← server walkers (.sv.jac) — jac-scale endpoints
 │   ├── auth_walkers.sv.jac              ← register(), login(), logout(), me()
 │   ├── workspace_walkers.sv.jac         ← create/list/get/update/delete workspace
 │   ├── file_walkers.sv.jac              ← upload_har(), upload_credentials_csv(),
@@ -318,24 +336,16 @@ jac_loadtest_web/
 │   ├── run_walkers.sv.jac               ← create_run(), start_run(), stop_run(),
 │   │                                       get_run(), list_runs()
 │   └── stream_walkers.sv.jac            ← stream_metrics(run_id) → SSE
-└── cl/
-    ├── App.cl.jac
-    ├── pages/
-    │   ├── Login.cl.jac
-    │   ├── Register.cl.jac
-    │   ├── WorkspaceList.cl.jac
-    │   ├── WorkspaceCreate.cl.jac       ← multi-step wizard
-    │   ├── WorkspaceDetail.cl.jac       ← HAR viewer + run history
-    │   ├── RunCreate.cl.jac             ← run settings form
-    │   └── RunDetail.cl.jac             ← live dashboard + final report
-    └── components/
-        ├── WorkspaceCard.cl.jac
-        ├── HarEntryTable.cl.jac
-        ├── RunSettingsForm.cl.jac
-        ├── RunControl.cl.jac
-        ├── MetricsDashboard.cl.jac
-        ├── LatencyChart.cl.jac
-        └── ReportViewer.cl.jac
+│
+├── models/                              ← node / dataclass definitions (.sv.jac)
+│   ├── workspace.sv.jac                 ← Workspace node
+│   └── run.sv.jac                       ← LoadTestRun node
+│
+├── lib/                                 ← utility modules
+│   └── utils.cl.jac                     ← shadcn cn() helper
+│
+└── styles/
+    └── global.css                       ← Tailwind + jac-shadcn theme tokens
 ```
 
 ---
