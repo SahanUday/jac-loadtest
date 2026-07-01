@@ -1,5 +1,7 @@
 # jac-loadtest
 
+> **⚠️ Archived:** This repository is no longer maintained. Future development continues at [jaseci-labs/jac-load-test](https://github.com/jaseci-labs/jac-load-test).
+
 Monorepo containing two projects:
 
 | Project | Description |
